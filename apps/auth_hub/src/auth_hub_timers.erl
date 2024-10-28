@@ -29,10 +29,10 @@ init([]) ->
     true = ets:insert(auth_hub, [{auth_hub_timers, self()}]),
     {ok, PauseTime} = application:get_env(auth_hub, timer_cache),
     {ok, PauseAllowRoles} = application:get_env(auth_hub, timer_allow_roles),
-    TCache = erlang:send_after(200, self(), {timer_cache, PauseTime}),
-    TAllowRoles = erlang:send_after(205, self(), {timer_allow_roles, PauseAllowRoles}),
-    {ok, #{timer_cache => TCache,
-           timer_allow_roles => TAllowRoles
+  %  TCache = erlang:send_after(200, self(), {timer_cache, PauseTime}),
+   % TAllowRoles = erlang:send_after(205, self(), {timer_allow_roles, PauseAllowRoles}),
+    {ok, #{%timer_cache => TCache,
+           %timer_allow_roles => TAllowRoles
     }}.
 
 terminate(_, _State) ->

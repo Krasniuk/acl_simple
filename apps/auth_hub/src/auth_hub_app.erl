@@ -8,14 +8,19 @@
 
 
 start(normal, _StartArgs) ->
-    ?LOG_INFO("~n~n ========== Application start ==========", []),
     auth_hub = ets:new(auth_hub, [set, public, named_table]),
+    opts = ets:new(opts, [named_table, public]),
     true = ets:insert(auth_hub, [{server_cache, #{}}]),
+
+    {ok, Salt} = application:get_env(auth_hub, salt),
+    true = ets:insert(opts, {salt, Salt}),
+
     % ----------
     {ok, Port} = application:get_env(auth_hub, listen_port),
     Dispatch = cowboy_router:compile([
         {'_', [
             {"/admin", auth_hub_admin_handler, []},
+            {"/sessions/open", auth_hub_sid_handler, []},
             {"/customer", auth_hub_customer_handler, []},
             {"/queue", auth_hub_queue_handler, []}
         ]}

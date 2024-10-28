@@ -7,10 +7,13 @@
 -define(LOG_CRITICAL(Format, Args), lager:log(critical, self(), Format, Args)).
 
 
--define(JSON_ERROR(Req),                  #{<<"result">> => <<"fail">>, <<"discription">> => Req}).
--define(JSON_OK,                          #{<<"result">> => <<"ok">>}).
--define(JSON_SHOW_ALLOW_ROLES(ListRoles), #{<<"result">> => <<"ok">>, <<"roles">> => ListRoles}).
--define(JSON_USERS(Users),                #{<<"result">> => <<"ok">>, <<"users">> => Users}).
--define(JSON_CUSTOM_GET_ROLES_OK(Roles),  #{<<"result">> => <<"ok">>, <<"roles">> => Roles}).
--define(JSON_ROLES_OF_USER(UserName, Roles), #{<<"result">> => <<"ok">>, <<"user">> => UserName, <<"roles">> => Roles}).
--define(JSON_DEVELOPMENT,                    #{<<"result">> => <<"develop now">>}).
+-define(JSON_ERROR(Req),                  #{<<"fail">> => #{<<"info">> => Req}}).
+-define(JSON_OK,                          #{<<"success">> => #{<<"info">> => <<"ok">>}}).
+-define(JSON_SHOW_ALLOW_ROLES(ListRoles), #{<<"success">> => #{<<"roles">> => ListRoles}}).
+-define(JSON_USERS(Users),                #{<<"success">> => #{<<"users">> => Users}}).
+-define(JSON_CUSTOM_GET_ROLES_OK(Roles),  #{<<"success">> => #{<<"roles">> => Roles}}).
+-define(JSON_ROLES_OF_USER(UserName, Roles), #{<<"success">> => #{<<"user">> => UserName, <<"roles">> => Roles}}).
+-define(JSON_DEVELOPMENT,                    #{<<"fail">> => #{<<"info">> => <<"develop now">>}}).
+
+-define(RESP_SUCCESS_SID(Sid, TsStart, TsEnd), #{<<"success">> => #{<<"sid">> => Sid, <<"ts_start">> => TsStart, <<"ts_end">> => TsEnd}}).
+-define(RESP_FAIL(Info), #{<<"fail">> => #{<<"info">> => Info}}).
