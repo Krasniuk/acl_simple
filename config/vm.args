@@ -1,7 +1,7 @@
 
--sname acl_simple_cluster1
+-sname auth_hub_main
 
--setcookie acl_simple_cookie
+-setcookie auth_hub_cookie
 
 +K true
 +A30

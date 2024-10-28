@@ -1,6 +1,6 @@
 #! /bin/bash
 
-appName=acl_simple
+appName=auth_hub
 
 pathFile=$(realpath $0)
 pathDir=$(dirname $pathFile)
@@ -8,12 +8,12 @@ pathDir=$(dirname $pathFile)
 cd $pathDir
 
 
-find="\[\'acl_simple_cluster1\@mykhailo-linux-1\'\]"
-insert="\[\'acl_simple_main\@mykhailo-linux-1\'\]"
+find="\[\'auth_hub_cluster1\@mykhailo-linux-1\'\]"
+insert="\[\'auth_hub_main\@mykhailo-linux-1\'\]"
 perl -pi -e 's/'$find'/'$insert'/g' config/sys.config
 
-find1="acl_simple_main"
-insert1="acl_simple_cluster1"
+find1="auth_hub_main"
+insert1="auth_hub_cluster1"
 perl -pi -e 's/'$find1'/'$insert1'/g' config/vm.args
 
 

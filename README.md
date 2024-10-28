@@ -1,10 +1,10 @@
-acl_simple
+auth_hub
 =====
 
 Build
 -----
     $ make rel
-    $ ./_build/prod/rel/acl_simple/bin/acl_simple console
+    $ ./_build/prod/rel/auth_hub/bin/auth_hub console
     
 or
 
@@ -13,11 +13,11 @@ or
 
 Common tests + EUnit tests
 ----
-    $ rebar3 ct --spec apps/acl_simple/tests/test.spec
+    $ rebar3 ct --spec apps/auth_hub/tests/test.spec
 
 WRK
 ----
-    $ wrk -t2 -c3 -d1m -R5700 -s apps/acl_simple/wrk/show_all_users.lua http://127.0.0.1:1913
+    $ wrk -t2 -c3 -d1m -R5700 -s apps/auth_hub/wrk/show_all_users.lua http://127.0.0.1:1913
     
 Data developer
 ---- 
@@ -26,14 +26,14 @@ Data developer
 
     Roles: "read", "write", "exec".
 
-    Cache saves in ets. Table 'acl_simple' in key 'server_cache'. 
+    Cache saves in ets. Table 'auth_hub' in key 'server_cache'. 
 
     login: admin
     pass: 12345678
 
 API
 -----
-    acl_simple_server:
+    auth_hub_server:
         State = #{<<"User">> => [<<"Role">>, ..], ..},
     
         handle_call:                                                                Have cache     Benchmark(wrk2)   Delay(wrk2)
