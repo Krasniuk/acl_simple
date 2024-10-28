@@ -1,0 +1,11 @@
+{level, details}.
+{incl_mods, [
+    auth_hub,
+    auth_hub_admin_handler,
+    auth_hub_app,
+    auth_hub_customer_handler,
+    auth_hub_pg,
+    auth_hub_server,
+    auth_hub_sup,
+    auth_hub_timer_cache
+]}.

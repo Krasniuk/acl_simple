@@ -1,0 +1,36 @@
+-module(auth_hub_app).
+-author('Mykhailo Krasniuk <miha.190901@gmail.com>').
+-behaviour(application).
+
+-include("auth_hub.hrl").
+
+-export([start/2, stop/1]).
+
+
+start(normal, _StartArgs) ->
+    ?LOG_INFO("~n~n ========== Application start ==========", []),
+    auth_hub = ets:new(auth_hub, [set, public, named_table]),
+    true = ets:insert(auth_hub, [{server_cache, #{}}]),
+    % ----------
+    {ok, Port} = application:get_env(auth_hub, listen_port),
+    Dispatch = cowboy_router:compile([
+        {'_', [
+            {"/admin", auth_hub_admin_handler, []},
+            {"/customer", auth_hub_customer_handler, []},
+            {"/queue", auth_hub_queue_handler, []}
+        ]}
+    ]),
+    {ok, _} = cowboy:start_clear(http, [{port, Port}], #{
+        env => #{dispatch => Dispatch}
+    }),
+    auth_hub_sup:start_link();
+
+start({takeover, NodeCluster}, StartArg) ->
+    _Pid = spawn(NodeCluster, auth_hub_app, stop, [null]), %% delete cluster run before execute main node auth_hub
+    ok = timer:sleep(1000),                                  %% wait wile deleted
+    start(normal, StartArg).
+
+
+stop(_State) ->
+    ok = cowboy:stop_listener(http).
+
