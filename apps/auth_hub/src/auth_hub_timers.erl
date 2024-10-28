@@ -1,4 +1,4 @@
--module(auth_hub_timer_cache).
+-module(auth_hub_timers).
 -author('Mykhailo Krasniuk <miha.190901@gmail.com>').
 -behavior(gen_server).
 
@@ -16,7 +16,7 @@ start_link() ->
     gen_server:start_link(?MODULE, [], []).
 
 refresh_cache() ->
-    [{_, Pid}] = ets:lookup(auth_hub, auth_hub_timer_cache),
+    [{_, Pid}] = ets:lookup(auth_hub, auth_hub_timers),
     _Timer = erlang:send_after(10, Pid, refresh_cache),
     ok.
 
@@ -26,7 +26,7 @@ refresh_cache() ->
 % ====================================================
 
 init([]) ->
-    true = ets:insert(auth_hub, [{auth_hub_timer_cache, self()}]),
+    true = ets:insert(auth_hub, [{auth_hub_timers, self()}]),
     {ok, PauseTime} = application:get_env(auth_hub, timer_cache),
     {ok, PauseAllowRoles} = application:get_env(auth_hub, timer_allow_roles),
     TCache = erlang:send_after(200, self(), {timer_cache, PauseTime}),

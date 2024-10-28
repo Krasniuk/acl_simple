@@ -119,7 +119,7 @@ delete_allow_roles_handler([Role|ListRoles]) ->
     [{_, AllowRoles}] = ets:lookup(auth_hub, allow_roles),
     {ok, _} = auth_hub_pg:delete("delete_allow_role_in_roles", [Role]),
     {ok, _} = auth_hub_pg:delete("delete_allow_role", [Role]),
-    ok = auth_hub_timer_cache:refresh_cache(),
+    ok = auth_hub_timers:refresh_cache(),
     true = ets:insert(auth_hub, [{allow_roles, AllowRoles -- [Role]}]),
     delete_allow_roles_handler(ListRoles).
 

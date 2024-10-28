@@ -17,6 +17,6 @@ init([]) ->
                           end, Args),
     SupFlags = {one_for_one, 5, 100},
     Server = {auth_hub_server, {auth_hub_server, start_link, []}, permanent, 1000, worker, []},
-    TimerCache = {auth_hub_timer_cache, {auth_hub_timer_cache, start_link, []}, permanent, 1000, worker, []},
+    TimerCache = {auth_hub_timers, {auth_hub_timers, start_link, []}, permanent, 1000, worker, []},
 
     {ok, {SupFlags, PoolSpecs ++ [TimerCache, Server]}}.

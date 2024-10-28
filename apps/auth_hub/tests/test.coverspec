@@ -7,5 +7,5 @@
     auth_hub_pg,
     auth_hub_server,
     auth_hub_sup,
-    auth_hub_timer_cache
+    auth_hub_timers
 ]}.
