@@ -70,5 +70,4 @@ get_session(Login, PassWord, SubSys) ->
 
 
 create_sid(_Login, _PassWord, _SubSys) ->
-    <<"d891c383998ed8568f885f5">>
-    .
+    <<"d891c383998ed8568f885f5">>.
