@@ -15,6 +15,7 @@
 start_link(Args) ->
     gen_server:start_link(?MODULE, Args, []).
 
+-spec select(list(), list()) -> {ok, PropListAtr::list(), PropListResp::list()} | {error, Reason::tuple()|no_connect}.
 select(Statement, Args) ->
     case poolboy:checkout(pg_pool) of
         full ->
@@ -26,6 +27,7 @@ select(Statement, Args) ->
             Reply
     end.
 
+-spec insert(list(), list()) -> {ok, integer()} | {error, Reason::tuple()|no_connect}.
 insert(Statement, Args) ->
     case poolboy:checkout(pg_pool) of
         full ->
@@ -119,6 +121,11 @@ parse(Conn) ->
    % {ok, _} = epgsql:parse(Conn, "roles_delete_by_name", "DELETE FROM roles WHERE user_id = (SELECT id FROM users WHERE name = $1) AND role = $2", [varchar, varchar]),
 
     {ok, _} = epgsql:parse(Conn, "get_passhash", "SELECT passhash FROM users WHERE login=$1", [varchar]),
+    {ok, _} = epgsql:parse(Conn, "insert_sid", "INSERT INTO sids (login, subsystem, sid, ts_end) VALUES ($1, $2, $3, $4)", [varchar, varchar, varchar, timestamp]),
+    {ok, _} = epgsql:parse(Conn, "get_roles", "SELECT role FROM roles where subsystem=$1 and login=$2", [varchar, varchar]),
+    {ok, _} = epgsql:parse(Conn, "update_sid", "UPDATE sids SET sid=$3, ts_end=$4 WHERE login=$1 AND subsystem=$2", [varchar, varchar, varchar, timestamp]),
+
+    {ok, _} = epgsql:parse(Conn, "download_sids", "SELECT sid, subsystem, login, null, ts_end FROM sids", []),
     ok.
 
 send_to_bd(undefined, _, _) ->

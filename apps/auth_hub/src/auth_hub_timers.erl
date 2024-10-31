@@ -26,13 +26,15 @@ refresh_cache() ->
 % ====================================================
 
 init([]) ->
-    true = ets:insert(auth_hub, [{auth_hub_timers, self()}]),
-    {ok, PauseTime} = application:get_env(auth_hub, timer_cache),
-    {ok, PauseAllowRoles} = application:get_env(auth_hub, timer_allow_roles),
-  %  TCache = erlang:send_after(200, self(), {timer_cache, PauseTime}),
-   % TAllowRoles = erlang:send_after(205, self(), {timer_allow_roles, PauseAllowRoles}),
+    TSetCache = erlang:send_after(200, self(), download_sids),
+    % true = ets:insert(auth_hub, [{auth_hub_timers, self()}]),
+    % {ok, PauseTime} = application:get_env(auth_hub, timer_cache),
+    % {ok, PauseAllowRoles} = application:get_env(auth_hub, timer_allow_roles),
+    %  TCache = erlang:send_after(200, self(), {timer_cache, PauseTime}),
+    % TAllowRoles = erlang:send_after(205, self(), {timer_allow_roles, PauseAllowRoles}),
     {ok, #{%timer_cache => TCache,
-           %timer_allow_roles => TAllowRoles
+        %timer_allow_roles => TAllowRoles,
+        download_sids_t => TSetCache
     }}.
 
 terminate(_, _State) ->
@@ -43,6 +45,19 @@ handle_call(_Data, _From, State) ->
     {reply, unknown_req, State}.
 handle_cast(_Data, State) ->
     {noreply, State}.
+
+
+handle_info(download_sids, #{download_sids_t := OldTimer} = State) ->
+    _ = erlang:cancel_timer(OldTimer),
+    NewTimer = case auth_hub_pg:select("download_sids", []) of
+                   {error, Reason} ->
+                       ?LOG_ERROR("download_sids db error, reason ~p", [Reason]),
+                       erlang:send_after(2000, self(), download_sids);
+                   {ok, _, EtsTable} ->
+                       true = ets:insert(sids_cache, EtsTable),
+                       OldTimer
+               end,
+    {noreply, State#{download_sids_t := NewTimer}};
 
 handle_info({timer_cache, PauseTime}, #{timer_cache := T} = State) ->
     _ = erlang:cancel_timer(T),

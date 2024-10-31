@@ -10,8 +10,8 @@ ts_to_bin({{Y, M, D}, {H, Mi, S}}) ->
     [MBin, DBin, HBin, MiBin, SBin] = correct_row_date([M, D, H, Mi, round(S)]),
     <<YBin/binary, "-", MBin/binary, "-", DBin/binary, " ", HBin/binary, ":", MiBin/binary, ":", SBin/binary>>.
 
--spec correct_row_date(list) -> list().
-correct_row_date([]) -> 11;
+-spec correct_row_date(list()) -> list().
+correct_row_date([]) -> [];
 correct_row_date([Arg|Tail]) ->
     BinArg = integer_to_binary(Arg) ,
     case byte_size(BinArg) =:= 2 of

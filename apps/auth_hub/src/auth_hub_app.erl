@@ -10,6 +10,7 @@
 start(normal, _StartArgs) ->
     auth_hub = ets:new(auth_hub, [set, public, named_table]),
     opts = ets:new(opts, [named_table, public]),
+    sids_cache = ets:new(sids_cache, [named_table, public]),
     true = ets:insert(auth_hub, [{server_cache, #{}}]),
 
     {ok, Salt} = application:get_env(auth_hub, salt),
