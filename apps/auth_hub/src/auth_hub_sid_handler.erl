@@ -34,15 +34,15 @@ handle_body(Body) ->
         {error, Reason} ->
             ?LOG_ERROR("Decode error, ~p", [Reason]),
             {400, ?JSON_ERROR(<<"Invalid request format">>)};
-        {ok, #{<<"login">> := Login, <<"pass">> := PassWord, <<"subsystem">> := SubSys}, _} ->
-            get_session(Login, PassWord, SubSys);
+        {ok, #{<<"login">> := Login, <<"pass">> := PassWord}, _} ->
+            get_session(Login, PassWord);
         _OtherMap ->
             ?LOG_ERROR("Absent needed params", []),
             {422, ?JSON_ERROR(<<"absent needed params">>)}
     end.
 
--spec get_session(binary(), binary(), binary()) -> {integer(), map()}.
-get_session(Login, PassWord, SubSys) ->
+-spec get_session(binary(), binary()) -> {integer(), map()}.
+get_session(Login, PassWord) ->
     case auth_hub_pg:select("get_passhash", [Login]) of
         {error, Reason} ->
             ?LOG_ERROR("Db error ~p", [Reason]),
@@ -58,9 +58,7 @@ get_session(Login, PassWord, SubSys) ->
                     TsSec = calendar:datetime_to_gregorian_seconds(Ts),
                     DateEnd = calendar:gregorian_seconds_to_datetime(TsSec + 1800),
                     TsEnd = auth_hub_converter:ts_to_bin(DateEnd),
-                    case create_sid(Login, SubSys, DateEnd) of
-                        subsystem_error ->
-                            {400, ?RESP_FAIL(<<"invalid subsystem">>)};
+                    case create_sid(Login, DateEnd) of
                         error ->
                             {502, ?RESP_FAIL(<<"invalid db response">>)};
                         Sid ->
@@ -75,31 +73,28 @@ get_session(Login, PassWord, SubSys) ->
             {403, ?RESP_FAIL(<<"invalid password or login">>)}
     end.
 
--spec create_sid(binary(), binary(), Ts :: tuple()) -> error | binary().
-create_sid(Login, SubSys, DateEnd) ->
+-spec create_sid(binary(), Ts :: tuple()) -> error | binary().
+create_sid(Login, DateEnd) ->
     Sid = generate_unique_sid(),
     DuplicatesList = ets:select(sids_cache, [{
-        {'$1', '$2', '$3', '_', '_'},
-        [{'=:=', '$2', SubSys}, {'=:=', '$3', Login}],
+        {'$1', '$2', '_', '_'},
+        [{'=:=', '$2', Login}],
         ['$1']
     }]),
     Statement = case DuplicatesList of
              [] -> "insert_sid";
              [_SidDel] -> "update_sid"
          end,
-    case {auth_hub_pg:insert(Statement, [Login, SubSys, Sid, DateEnd]), DuplicatesList} of
+    case {auth_hub_pg:insert(Statement, [Login, Sid, DateEnd]), DuplicatesList} of
         {{ok, 1}, []} ->
-            true = ets:insert(sids_cache, {Sid, SubSys, Login, null, DateEnd}),
+            true = ets:insert(sids_cache, {Sid, Login, null, DateEnd}),
             Sid;
         {{ok, 1}, [SidDel]} ->
             true = ets:delete(sids_cache, SidDel),
-            true = ets:insert(sids_cache, {Sid, SubSys, Login, null, DateEnd}),
+            true = ets:insert(sids_cache, {Sid, Login, null, DateEnd}),
             Sid;
-        {{error, {_, _, _, foreign_key_violation, _, _}}, _} ->
-            ?LOG_ERROR("Incorect subsystem", []),
-            subsystem_error;
         {{error, Reason}, _} ->
-            ?LOG_ERROR("Db error, insert('insert_sid', [~p, ~p, ~p, ~p]), reason ~p", [Login, SubSys, Sid, DateEnd, Reason]),
+            ?LOG_ERROR("Db error, insert('insert_sid', [~p, ~p, ~p, ~p]), reason ~p", [Login, Sid, DateEnd, Reason]),
             error
     end.
 

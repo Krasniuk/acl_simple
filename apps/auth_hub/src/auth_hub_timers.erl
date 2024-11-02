@@ -26,7 +26,11 @@ refresh_cache() ->
 % ====================================================
 
 init([]) ->
-    TSetCache = erlang:send_after(200, self(), download_sids),
+    WorkerPid = self(),
+    TSetCache = erlang:send_after(200, WorkerPid, download_sids),
+    TDelSids = erlang:send_after(1000, WorkerPid, delete_legacy_sids),
+
+
     % true = ets:insert(auth_hub, [{auth_hub_timers, self()}]),
     % {ok, PauseTime} = application:get_env(auth_hub, timer_cache),
     % {ok, PauseAllowRoles} = application:get_env(auth_hub, timer_allow_roles),
@@ -34,7 +38,9 @@ init([]) ->
     % TAllowRoles = erlang:send_after(205, self(), {timer_allow_roles, PauseAllowRoles}),
     {ok, #{%timer_cache => TCache,
         %timer_allow_roles => TAllowRoles,
-        download_sids_t => TSetCache
+        download_sids_t => TSetCache,
+        delete_legacy_sids_t => TDelSids,
+        worker_pid => WorkerPid
     }}.
 
 terminate(_, _State) ->
@@ -47,16 +53,39 @@ handle_cast(_Data, State) ->
     {noreply, State}.
 
 
-handle_info(download_sids, #{download_sids_t := OldTimer} = State) ->
+handle_info(download_sids, #{download_sids_t := OldTimer, worker_pid := WorkerPid} = State) ->
     _ = erlang:cancel_timer(OldTimer),
     NewTimer = case auth_hub_pg:select("download_sids", []) of
                    {error, Reason} ->
                        ?LOG_ERROR("download_sids db error, reason ~p", [Reason]),
-                       erlang:send_after(2000, self(), download_sids);
+                       erlang:send_after(2000, WorkerPid, download_sids);
                    {ok, _, EtsTable} ->
-                       true = ets:insert(sids_cache, EtsTable),
+                       EtsTable1 = parse_ets_table(EtsTable),
+                       true = ets:insert(sids_cache, EtsTable1),
                        OldTimer
                end,
+    {noreply, State#{download_sids_t := NewTimer}};
+handle_info(delete_legacy_sids, #{delete_legacy_sids_t := OldTimer, worker_pid := WorkerPid} = State) ->
+    _ = erlang:cancel_timer(OldTimer),
+    SidsCache = ets:tab2list(sids_cache),
+    case select_legacy_sids(SidsCache, calendar:local_time()) of
+        [] ->
+            ok;
+        SidsDelete ->
+            LenDelSids = length(SidsDelete),
+            Sql = generate_sql(flag_first, LenDelSids, ?SQL_DELETE_SIDS),
+            case auth_hub_pg:sql_req_not_prepared(Sql, SidsDelete) of
+                {ok, LenDelSids} ->
+                    delete_sids(sids_cache, SidsDelete);
+                {ok, OtherDeleted} ->
+                    ?LOG_WARNING("delete_legacy_sids delete not all sids in db ~p, ~p", [OtherDeleted, LenDelSids]),
+                    delete_sids(sids_cache, SidsDelete);
+                {error, Reason} ->
+                    ?LOG_ERROR("delete_legacy_sids can't send req, ~p", [Reason])
+            end
+    end,
+    NewTimer = erlang:send_after(120000, WorkerPid, delete_legacy_sids),
+    %%?LOG_DEBUG("delete_legacy_sids = ok", []),
     {noreply, State#{download_sids_t := NewTimer}};
 
 handle_info({timer_cache, PauseTime}, #{timer_cache := T} = State) ->
@@ -95,6 +124,11 @@ handle_info(_Data, State) ->
 % Help-functions for inverse functions
 % ====================================================
 
+-spec parse_ets_table(list()) -> list().
+parse_ets_table([]) -> [];
+parse_ets_table([{Sid, Login, RolesTuple, {Date, {H, M, S}}}|T]) ->
+    [{Sid, Login, RolesTuple, {Date, {H, M, round(S)}}}| parse_ets_table(T)].
+
 -spec allow_roles_handler() -> list() | {error, any()}.
 allow_roles_handler() ->
     case auth_hub_pg:select("get_allow_roles", []) of
@@ -123,6 +157,32 @@ convert_to_map([{Name, PassHash} | T], MapCache, MapPassHash) ->
     MapPassHash1 = MapPassHash#{Name => jsone:decode(PassHash)},
     convert_to_map(T, MapCache1, MapPassHash1).
 
+-spec delete_sids(atom(), list()) -> ok.
+delete_sids(_, []) -> ok;
+delete_sids(Table, [Sid|T]) ->
+    true = ets:delete(Table, Sid),
+    delete_sids(Table, T).
+
+-spec select_legacy_sids(EtsTab :: list(), TsNow :: tuple()) -> Sids :: list().
+select_legacy_sids([], _) -> [];
+select_legacy_sids([{Sid, _Login, _RolesTuple, Ts} | T], TsNow) ->
+    GSecSid = calendar:datetime_to_gregorian_seconds(Ts),
+    GSecNow = calendar:datetime_to_gregorian_seconds(TsNow),
+    case GSecNow >= GSecSid of
+        true ->
+            [Sid | select_legacy_sids(T, TsNow)];
+        false ->
+            select_legacy_sids(T, TsNow)
+    end.
+
+-spec generate_sql(flag_first|null, integer(), list()) -> list().
+generate_sql(_Flag, 0, Sql) -> Sql;
+generate_sql(flag_first, SidsNum, Sql) ->
+    Sql1 = Sql ++ " sid=$" ++ integer_to_list(SidsNum),
+    generate_sql(null, SidsNum - 1, Sql1);
+generate_sql(Flag, SidsNum, Sql) ->
+    Sql1 = Sql ++ " or sid=$" ++ integer_to_list(SidsNum),
+    generate_sql(Flag, SidsNum - 1, Sql1).
 
 %% ------------------------------------------
 

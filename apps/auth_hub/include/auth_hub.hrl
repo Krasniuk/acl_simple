@@ -17,3 +17,5 @@
 
 -define(RESP_SUCCESS_SID(Sid, TsStart, TsEnd), #{<<"success">> => #{<<"sid">> => Sid, <<"ts_start">> => TsStart, <<"ts_end">> => TsEnd}}).
 -define(RESP_FAIL(Info), #{<<"fail">> => #{<<"info">> => Info}}).
+
+-define(SQL_DELETE_SIDS, "DELETE FROM sids WHERE").

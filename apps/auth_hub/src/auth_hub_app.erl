@@ -22,7 +22,7 @@ start(normal, _StartArgs) ->
         {'_', [
             {"/admin", auth_hub_admin_handler, []},
             {"/sessions/open", auth_hub_sid_handler, []},
-            {"/customer", auth_hub_customer_handler, []},
+            {"/sessions/roles", auth_hub_customer_handler, []},
             {"/queue", auth_hub_queue_handler, []}
         ]}
     ]),
