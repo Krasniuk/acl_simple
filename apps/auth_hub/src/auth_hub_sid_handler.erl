@@ -5,11 +5,19 @@
 
 -include("auth_hub.hrl").
 
-init(Req, Opts) ->
+-spec init(map(), list()) -> tuple().
+init(Req, [open_session] = Opts) ->
     Method = cowboy_req:method(Req),
     HasBody = cowboy_req:has_body(Req),
     Resp = handle_post(Method, HasBody, Req),
+    {ok, Resp, Opts};
+init(Req, [check_sid] = Opts) ->
+    Method = cowboy_req:method(Req),
+    Resp = handle_get(Method, Req),
     {ok, Resp, Opts}.
+
+
+%% ========= open_session =========
 
 handle_post(<<"POST">>, true, Req) ->
     handle_req(Req);
@@ -25,7 +33,7 @@ handle_req(Req) ->
     ?LOG_DEBUG("Post request ~p", [Body]),
     {Status, RespMap} = handle_body(Body),
     RespBody = jsone:encode(RespMap),
-    ?LOG_DEBUG("Post responce ~p, ~p", [Status, RespMap]),
+    ?LOG_DEBUG("Post reply ~p", [Status]),
     cowboy_req:reply(Status, #{<<"content-type">> => <<"application/json; charset=UTF-8">>}, RespBody, Req).
 
 -spec handle_body(binary()) -> {integer(), map()}.
@@ -33,7 +41,7 @@ handle_body(Body) ->
     case jsone:try_decode(Body) of
         {error, Reason} ->
             ?LOG_ERROR("Decode error, ~p", [Reason]),
-            {400, ?JSON_ERROR(<<"Invalid request format">>)};
+            {400, ?JSON_ERROR(<<"invalid request format">>)};
         {ok, #{<<"login">> := Login, <<"pass">> := PassWord}, _} ->
             get_session(Login, PassWord);
         _OtherMap ->
@@ -106,5 +114,57 @@ generate_unique_sid() ->
             Sid;
         _Other ->
             generate_unique_sid()
+    end.
+
+
+%% ========= check_sid =========
+
+-spec handle_get(binary(), map()) -> term().
+handle_get(<<"GET">>, Req) ->
+    %SidAuth = cowboy_req:header(<<"sid">>, Req, undefined),
+    {HttpCode, RespBodyMap} = handle_get_req(Req),
+    RespBody = jsone:encode(RespBodyMap),
+    cowboy_req:reply(HttpCode, #{<<"content-type">> => <<"application/json; charset=UTF-8">>}, RespBody, Req);
+handle_get(Method, Req) ->
+    ?LOG_ERROR("Method ~p not allowed ~p~n", [Method, Req]),
+    cowboy_req:reply(405, Req).
+
+-spec handle_get_req(map()) -> {integer(), map()}.
+handle_get_req(#{qs := undefined}) ->
+    ?LOG_ERROR("Api params is undefined", []),
+    {422, ?RESP_FAIL(<<"absent needed params in uri">>)};
+handle_get_req(#{qs := ParamsRow}) ->
+    List = binary:split(ParamsRow, <<"&">>, [global]),
+    case qs_to_proplist(List, []) of
+        error ->
+            {400, ?RESP_FAIL(<<"invalid params in uri">>)};
+        OtherParams ->
+            Sid = proplists:get_value(<<"sid">>, OtherParams, undefined),
+            check_sid(Sid)
+    end.
+
+-spec check_sid(undefined | binary()) -> {integer(), map()}.
+check_sid(undefined) ->
+    {422, ?RESP_FAIL(<<"absent needed params in uri">>)};
+check_sid(Sid) ->
+    case ets:lookup(sids_cache, Sid) of
+        [] ->
+            {200, ?RESP_SUCCESS_CHECK_SID(false)};
+        [{Sid, _, _, TsEnd}] ->
+            TsNowSec = calendar:datetime_to_gregorian_seconds(calendar:local_time()),
+            TsEndSec = calendar:datetime_to_gregorian_seconds(TsEnd),
+            IsActiveSid = TsEndSec - TsNowSec > 0,
+            {200, ?RESP_SUCCESS_CHECK_SID(IsActiveSid)}
+    end.
+
+-spec qs_to_proplist(list(), list()) -> list().
+qs_to_proplist([], Result) -> Result;
+qs_to_proplist([H|T], Result) ->
+    case binary:split(H, <<"=">>, [global]) of
+        [Key, Value] ->
+            qs_to_proplist(T, Result ++ [{Key, Value}]);
+        Other ->
+            ?LOG_ERROR("Invalid params in api ~p", [Other]),
+            error
     end.
 

@@ -16,6 +16,7 @@
 -define(JSON_DEVELOPMENT,                    #{<<"fail">> => #{<<"info">> => <<"develop now">>}}).
 
 -define(RESP_SUCCESS_SID(Sid, TsStart, TsEnd), #{<<"success">> => #{<<"sid">> => Sid, <<"ts_start">> => TsStart, <<"ts_end">> => TsEnd}}).
+-define(RESP_SUCCESS_CHECK_SID(Bool), #{<<"success">> => #{<<"is_active_session">> => Bool}}).
 -define(RESP_FAIL(Info), #{<<"fail">> => #{<<"info">> => Info}}).
 
 -define(SQL_DELETE_SIDS, "DELETE FROM sids WHERE").

@@ -76,16 +76,17 @@ handle_info(delete_legacy_sids, #{delete_legacy_sids_t := OldTimer, worker_pid :
             Sql = generate_sql(flag_first, LenDelSids, ?SQL_DELETE_SIDS),
             case auth_hub_pg:sql_req_not_prepared(Sql, SidsDelete) of
                 {ok, LenDelSids} ->
-                    delete_sids(sids_cache, SidsDelete);
+                    delete_sids(sids_cache, SidsDelete),
+                    ?LOG_DEBUG("delete_legacy_sids delete sids ~p", [SidsDelete]);
                 {ok, OtherDeleted} ->
                     ?LOG_WARNING("delete_legacy_sids delete not all sids in db ~p, ~p", [OtherDeleted, LenDelSids]),
-                    delete_sids(sids_cache, SidsDelete);
+                    delete_sids(sids_cache, SidsDelete),
+                    ?LOG_DEBUG("delete_legacy_sids delete sids ~p", [SidsDelete]);
                 {error, Reason} ->
                     ?LOG_ERROR("delete_legacy_sids can't send req, ~p", [Reason])
             end
     end,
     NewTimer = erlang:send_after(120000, WorkerPid, delete_legacy_sids),
-    %%?LOG_DEBUG("delete_legacy_sids = ok", []),
     {noreply, State#{download_sids_t := NewTimer}};
 
 handle_info({timer_cache, PauseTime}, #{timer_cache := T} = State) ->

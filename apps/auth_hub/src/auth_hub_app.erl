@@ -21,9 +21,9 @@ start(normal, _StartArgs) ->
     Dispatch = cowboy_router:compile([
         {'_', [
             {"/admin", auth_hub_admin_handler, []},
-            {"/sessions/open", auth_hub_sid_handler, []},
-            {"/sessions/roles", auth_hub_customer_handler, []},
-            {"/queue", auth_hub_queue_handler, []}
+            {"/session/open", auth_hub_sid_handler, [open_session]},
+            {"/session/check", auth_hub_sid_handler, [check_sid]},
+            {"/session/roles", auth_hub_customer_handler, []}
         ]}
     ]),
     {ok, _} = cowboy:start_clear(http, [{port, Port}], #{
