@@ -11,8 +11,15 @@ init(Req, Opts) ->
     Resp = handle_post(Method, HasBody, Req),
     {ok, Resp, Opts}.
 
+
 handle_post(<<"POST">>, true, Req) ->
-    handle_req(Req);
+    {ok, Body, _Req} = cowboy_req:read_body(Req),
+    Sid = cowboy_req:header(<<"sid">>, Req, undefined),
+    ?LOG_DEBUG("Post request ~p", [Body]),
+    {HttpCode, RespMap} = handle_req(Body, Sid),
+    ?LOG_DEBUG("Post reply ~p", [HttpCode]),
+    RespBody = jsone:encode(RespMap),
+    cowboy_req:reply(HttpCode, #{<<"content-type">> => <<"application/json; charset=UTF-8">>}, RespBody, Req);
 handle_post(<<"POST">>, false, Req) ->
     ?LOG_ERROR("Missing body ~p~n", [Req]),
     cowboy_req:reply(400, #{}, <<"Missing body.">>, Req);
@@ -20,48 +27,52 @@ handle_post(Method, _, Req) ->
     ?LOG_ERROR("Method ~p not allowed ~p~n", [Method, Req]),
     cowboy_req:reply(405, Req).
 
-handle_req(Req) ->
-    {ok, Body, _Req} = cowboy_req:read_body(Req),
-    ?LOG_DEBUG("Post request ~p", [Body]),
-    {Status, Json} = handle_body(Body),
-    ?LOG_DEBUG("Post reply ~p~n----- ----- -----~n", [Json]),
-    cowboy_req:reply(Status, #{<<"content-type">> => <<"application/json; charset=UTF-8">>}, Json, Req).
-
-handle_body(Body) ->
-    try jsone:decode(Body) of
-        Map ->
-            handle_package(Map)
-    catch
-        Exception:Reason ->
-            ?LOG_ERROR("jsone:decode error (~p : ~p)", [Exception, Reason]),
-            {400, jsone:encode(?JSON_ERROR(<<"Invalid request format">>))}
+-spec handle_req(binary(), binary()|undefined) -> {integer(), map()}.
+handle_req(Body, Sid) ->
+    case auth_hub_helper:check_sid(Sid) of
+        {Sid, Login, null, TsEnd} ->
+            case auth_hub_pg:get_roles(Login) of
+                null ->
+                    {502, ?RESP_FAIL(<<"invalid db resp">>)};
+                RolesMap ->
+                    true = ets:insert(sids_cache, {Sid, Login, RolesMap, TsEnd}),
+                    handle_body(Body, RolesMap)
+            end;
+        {Sid, _Login, RolesMap, _TsEnd} ->
+            handle_body(Body, RolesMap);
+        _Error ->
+            ?LOG_ERROR("sid is invalid or legacy", []),
+            {403, ?RESP_FAIL(<<"sid is invalid or legacy">>)}
     end.
 
-handle_package(Map) ->
-    try
-        #{<<"auth">> := AuthPack} = Map,
-        #{<<"login">> := Login, <<"passhash">> := PassHash} = AuthPack,
-        #{<<"parameters">> := ParamPack} = Map,
-        handle_parameters({Login, PassHash}, ParamPack)
-    catch
-        Class:Reason ->
-            ?LOG_ERROR("Catch error (~p : ~p)", [Class, Reason]),
-            {206, jsone:encode(?JSON_ERROR(<<"Invalid request format">>))}
+-spec handle_body(binary(), map()) -> {integer(), map()}.
+handle_body(Body, RolesTab) ->
+    case jsone:try_decode(Body) of
+        {error, Reason} ->
+            ?LOG_ERROR("Decode error, ~p", [Reason]),
+            {400, ?JSON_ERROR(<<"invalid request format">>)};
+        {ok, #{<<"method">> := Method} = BodyMap, _} ->
+            Roles = maps:get(?SERVICE_SUBSYSTEM, RolesTab, []),
+            case maps:get(Method, ?SERVICE_ROLES, undefined) of
+                undefined ->
+                    ?LOG_ERROR("Invalid method", []),
+                    {422, ?RESP_FAIL(<<"invalid method">>)};
+                PermitRoles ->
+                    case auth_hub_helper:check_roles(Roles, PermitRoles) of
+                        false ->
+                            ?LOG_ERROR("Absent roles ~p in ~p", [PermitRoles, Roles]),
+                            {401, ?RESP_FAIL(<<"absent role">>)};
+                        true ->
+                            handle_method(BodyMap)
+                    end
+            end;
+        _OtherMap ->
+            ?LOG_ERROR("Absent needed params", []),
+            {422, ?JSON_ERROR(<<"absent needed params">>)}
     end.
 
-handle_parameters({Login, PassHash}, #{<<"method">> := Method} = ParamPack) ->
-    case auth(Login, PassHash, Method) of
-        true ->
-            handle_method(Method, ParamPack);
-        false ->
-            ?LOG_ERROR("Auth error, login ~p method ~p~n", [Login, Method]),
-            {401, jsone:encode(?JSON_ERROR(<<"Invalid passhash or role absent">>))}
-    end.
-
--spec auth(binary(), list(), binary()) -> true|false.
-auth(Login, Hash, _Method) ->
-    {ok, _, [{RealHash}]} = auth_hub_pg:select("get_admin_passhash", [Login]),
-    RealHash == Hash.
+handle_method(_BodyMap) ->
+    {200, ?RESP_SUCCESS(<<"ok">>)}.
 
 -spec handle_method(binary(), map()) -> {integer(), binary()}.
 handle_method(<<"user_add">>, Map) ->

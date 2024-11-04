@@ -62,6 +62,7 @@ handle_info(download_sids, #{download_sids_t := OldTimer, worker_pid := WorkerPi
                    {ok, _, EtsTable} ->
                        EtsTable1 = parse_ets_table(EtsTable),
                        true = ets:insert(sids_cache, EtsTable1),
+                       ?LOG_DEBUG("Success download sids_catche from db", []),
                        OldTimer
                end,
     {noreply, State#{download_sids_t := NewTimer}};

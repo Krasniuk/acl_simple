@@ -62,10 +62,10 @@ get_session(Login, PassWord) ->
             case binary_to_list(PermitHash) =:= PassHash of
                 true ->
                     Ts = calendar:local_time(),
-                    TsStart = auth_hub_converter:ts_to_bin(Ts),
+                    TsStart = auth_hub_helper:ts_to_bin(Ts),
                     TsSec = calendar:datetime_to_gregorian_seconds(Ts),
                     DateEnd = calendar:gregorian_seconds_to_datetime(TsSec + 1800),
-                    TsEnd = auth_hub_converter:ts_to_bin(DateEnd),
+                    TsEnd = auth_hub_helper:ts_to_bin(DateEnd),
                     case create_sid(Login, DateEnd) of
                         error ->
                             {502, ?RESP_FAIL(<<"invalid db response">>)};
@@ -95,11 +95,13 @@ create_sid(Login, DateEnd) ->
          end,
     case {auth_hub_pg:insert(Statement, [Login, Sid, DateEnd]), DuplicatesList} of
         {{ok, 1}, []} ->
-            true = ets:insert(sids_cache, {Sid, Login, null, DateEnd}),
+            RolesTab = auth_hub_pg:get_roles(Login),
+            true = ets:insert(sids_cache, {Sid, Login, RolesTab, DateEnd}),
             Sid;
         {{ok, 1}, [SidDel]} ->
             true = ets:delete(sids_cache, SidDel),
-            true = ets:insert(sids_cache, {Sid, Login, null, DateEnd}),
+            RolesTab = auth_hub_pg:get_roles(Login),
+            true = ets:insert(sids_cache, {Sid, Login, RolesTab, DateEnd}),
             Sid;
         {{error, Reason}, _} ->
             ?LOG_ERROR("Db error, insert('insert_sid', [~p, ~p, ~p, ~p]), reason ~p", [Login, Sid, DateEnd, Reason]),
@@ -140,21 +142,14 @@ handle_get_req(#{qs := ParamsRow}) ->
             {400, ?RESP_FAIL(<<"invalid params in uri">>)};
         OtherParams ->
             Sid = proplists:get_value(<<"sid">>, OtherParams, undefined),
-            check_sid(Sid)
-    end.
-
--spec check_sid(undefined | binary()) -> {integer(), map()}.
-check_sid(undefined) ->
-    {422, ?RESP_FAIL(<<"absent needed params in uri">>)};
-check_sid(Sid) ->
-    case ets:lookup(sids_cache, Sid) of
-        [] ->
-            {200, ?RESP_SUCCESS_CHECK_SID(false)};
-        [{Sid, _, _, TsEnd}] ->
-            TsNowSec = calendar:datetime_to_gregorian_seconds(calendar:local_time()),
-            TsEndSec = calendar:datetime_to_gregorian_seconds(TsEnd),
-            IsActiveSid = TsEndSec - TsNowSec > 0,
-            {200, ?RESP_SUCCESS_CHECK_SID(IsActiveSid)}
+            case auth_hub_helper:check_sid(Sid) of
+                error ->
+                    {400, ?RESP_FAIL(<<"invalid sid in uri">>)};
+                legacy_sid ->
+                    {200, ?RESP_SUCCESS_CHECK_SID(false)};
+                {Sid, _Login, _RolesTab, _TsEnd} ->
+                    {200, ?RESP_SUCCESS_CHECK_SID(true)}
+            end
     end.
 
 -spec qs_to_proplist(list(), list()) -> list().
