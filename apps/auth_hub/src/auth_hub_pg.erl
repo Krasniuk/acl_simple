@@ -83,7 +83,7 @@ delete(Statement, Args) ->
             {error, {timeout_pull, <<"too many requests">>}}
     end.
 
--spec sql_req_not_prepared(list(), list()) -> {ok, list()} | {error, term()} | {error, {timeout_pull, binary()}}.
+-spec sql_req_not_prepared(list(), list()) -> {ok, Colomn::list(), list()}| {ok, list()} | {error, term()} | {error, {timeout_pull, binary()}}.
 sql_req_not_prepared(Sql, Args) ->
     try poolboy:checkout(pg_pool, true, 1000) of
         full ->
@@ -99,7 +99,7 @@ sql_req_not_prepared(Sql, Args) ->
             {error, {timeout_pull, <<"too many requests">>}}
     end.
 
--spec sql_req_not_prepared(pid(), list(), list()) -> {ok, list()} | {error, term()}.
+-spec sql_req_not_prepared(pid(), list(), list()) -> {ok, Colomn::list(), list()} | {ok, list()} | {error, term()}.
 sql_req_not_prepared(WorkerPid, Sql, Args) ->
     gen_server:call(WorkerPid, {sql_req_not_prepared, Sql, Args}).
 

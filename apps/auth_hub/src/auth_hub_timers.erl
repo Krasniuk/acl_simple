@@ -27,7 +27,7 @@ refresh_cache() ->
 
 init([]) ->
     WorkerPid = self(),
-    TSetCache = erlang:send_after(200, WorkerPid, download_sids),
+    TInitialization = erlang:send_after(200, WorkerPid, initialization),
     TDelSids = erlang:send_after(5000, WorkerPid, delete_legacy_sids),
 
 
@@ -38,7 +38,7 @@ init([]) ->
     % TAllowRoles = erlang:send_after(205, self(), {timer_allow_roles, PauseAllowRoles}),
     {ok, #{%timer_cache => TCache,
         %timer_allow_roles => TAllowRoles,
-        download_sids_t => TSetCache,
+        initialization_t => TInitialization,
         delete_legacy_sids_t => TDelSids,
         worker_pid => WorkerPid
     }}.
@@ -53,19 +53,23 @@ handle_cast(_Data, State) ->
     {noreply, State}.
 
 
-handle_info(download_sids, #{download_sids_t := OldTimer, worker_pid := WorkerPid} = State) ->
+handle_info(initialization, #{initialization_t := OldTimer, worker_pid := WorkerPid} = State) ->
     _ = erlang:cancel_timer(OldTimer),
-    NewTimer = case auth_hub_pg:select("download_sids", []) of
-                   {error, Reason} ->
-                       ?LOG_ERROR("download_sids db error, reason ~p", [Reason]),
-                       erlang:send_after(2000, WorkerPid, download_sids);
-                   {ok, _, EtsTable} ->
-                       EtsTable1 = parse_ets_table(EtsTable),
-                       true = ets:insert(sids_cache, EtsTable1),
-                       ?LOG_DEBUG("Success download sids_catche from db", []),
-                       OldTimer
+    NewTimer = try poolboy:checkout(pg_pool, true, 1000) of
+                   full ->
+                       ?LOG_ERROR("download_sids no workers in pg_pool", []),
+                       erlang:send_after(2000, WorkerPid, initialization);
+                   PgPid ->
+                       DbRespSid = auth_hub_pg:sql_req_not_prepared(PgPid, ?SQL_INIT_SIDS, []),
+                       DbRespSubSys = auth_hub_pg:sql_req_not_prepared(PgPid, ?SQL_INIT_SUBSYS, []),
+                       ok = poolboy:checkin(pg_pool, PgPid),
+                       save_to_ets(DbRespSid, DbRespSubSys, WorkerPid)
+               catch
+                   exit:{timeout, Reason} ->
+                       ?LOG_ERROR("download_sids no workers in pg_pool ~p", [Reason]),
+                       erlang:send_after(2000, WorkerPid, initialization)
                end,
-    {noreply, State#{download_sids_t := NewTimer}};
+    {noreply, State#{initialization_t := NewTimer}};
 handle_info(delete_legacy_sids, #{delete_legacy_sids_t := OldTimer, worker_pid := WorkerPid} = State) ->
     _ = erlang:cancel_timer(OldTimer),
     SidsCache = ets:tab2list(sids_cache),
@@ -88,7 +92,7 @@ handle_info(delete_legacy_sids, #{delete_legacy_sids_t := OldTimer, worker_pid :
             end
     end,
     NewTimer = erlang:send_after(600000, WorkerPid, delete_legacy_sids),
-    {noreply, State#{download_sids_t := NewTimer}};
+    {noreply, State#{delete_legacy_sids_t := NewTimer}};
 
 handle_info({timer_cache, PauseTime}, #{timer_cache := T} = State) ->
     _ = erlang:cancel_timer(T),
@@ -126,10 +130,24 @@ handle_info(_Data, State) ->
 % Help-functions for inverse functions
 % ====================================================
 
--spec parse_ets_table(list()) -> list().
-parse_ets_table([]) -> [];
-parse_ets_table([{Sid, Login, RolesTuple, {Date, {H, M, S}}}|T]) ->
-    [{Sid, Login, RolesTuple, {Date, {H, M, round(S)}}}| parse_ets_table(T)].
+-spec save_to_ets(list(), list(), pid()) -> null | reference().
+save_to_ets(_, {error, ReasonSubSys}, WorkerPid) ->
+    ?LOG_ERROR("initialization get_subsys internal error ~p", [ReasonSubSys]),
+    erlang:send_after(2000, WorkerPid, initialization);
+save_to_ets({error, ReasonSid}, _, WorkerPid) ->
+    ?LOG_ERROR("initialization get_sids internal error ~p", [ReasonSid]),
+    erlang:send_after(2000, WorkerPid, initialization);
+save_to_ets({ok, _, DbRespSid}, {ok, _, DbRespSubSys}, _WorkerPid) ->
+    EtsSids = parse_sids(DbRespSid),
+    true = ets:insert(sids_cache, EtsSids),
+    true = ets:insert(subsys_cache, DbRespSubSys),
+    ?LOG_DEBUG("Success initialization sids_catche, subsys_cache from db", []),
+    null.
+
+-spec parse_sids(list()) -> list().
+parse_sids([]) -> [];
+parse_sids([{Sid, Login, RolesTuple, {Date, {H, M, S}}} | T]) ->
+    [{Sid, Login, RolesTuple, {Date, {H, M, round(S)}}} | parse_sids(T)].
 
 -spec allow_roles_handler() -> list() | {error, any()}.
 allow_roles_handler() ->
@@ -161,7 +179,7 @@ convert_to_map([{Name, PassHash} | T], MapCache, MapPassHash) ->
 
 -spec delete_sids(atom(), list()) -> ok.
 delete_sids(_, []) -> ok;
-delete_sids(Table, [Sid|T]) ->
+delete_sids(Table, [Sid | T]) ->
     true = ets:delete(Table, Sid),
     delete_sids(Table, T).
 

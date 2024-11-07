@@ -66,8 +66,8 @@ handle_body(Body, RolesTab) ->
                             handle_method(BodyMap)
                     end
             end;
-        _OtherMap ->
-            ?LOG_ERROR("Absent needed params", []),
+        {ok, OtherMap, _} ->
+            ?LOG_ERROR("Absent needed params ~p", [OtherMap]),
             {422, ?JSON_ERROR(<<"absent needed params">>)}
     end.
 

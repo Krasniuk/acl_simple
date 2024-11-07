@@ -11,6 +11,7 @@ start(normal, _StartArgs) ->
     auth_hub = ets:new(auth_hub, [set, public, named_table]),
     opts = ets:new(opts, [named_table, public]),
     sids_cache = ets:new(sids_cache, [named_table, public]),
+    subsys_cache = ets:new(subsys_cache, [named_table, public]),
     true = ets:insert(auth_hub, [{server_cache, #{}}]),
 
     {ok, Salt} = application:get_env(auth_hub, salt),
@@ -23,7 +24,8 @@ start(normal, _StartArgs) ->
             {"/admin", auth_hub_admin_handler, []},
             {"/session/open", auth_hub_sid_handler, [open_session]},
             {"/session/check", auth_hub_sid_handler, [check_sid]},
-            {"/session/roles", auth_hub_customer_handler, []}
+            {"/authorization/roles", auth_hub_auth_handler, [get_roles]},
+            {"/identification/login", auth_hub_auth_handler, [get_ldap]}
         ]}
     ]),
     {ok, _} = cowboy:start_clear(http, [{port, Port}], #{
