@@ -28,7 +28,7 @@ refresh_cache() ->
 init([]) ->
     WorkerPid = self(),
     TSetCache = erlang:send_after(200, WorkerPid, download_sids),
-    TDelSids = erlang:send_after(1000, WorkerPid, delete_legacy_sids),
+    TDelSids = erlang:send_after(5000, WorkerPid, delete_legacy_sids),
 
 
     % true = ets:insert(auth_hub, [{auth_hub_timers, self()}]),
@@ -87,7 +87,7 @@ handle_info(delete_legacy_sids, #{delete_legacy_sids_t := OldTimer, worker_pid :
                     ?LOG_ERROR("delete_legacy_sids can't send req, ~p", [Reason])
             end
     end,
-    NewTimer = erlang:send_after(120000, WorkerPid, delete_legacy_sids),
+    NewTimer = erlang:send_after(600000, WorkerPid, delete_legacy_sids),
     {noreply, State#{download_sids_t := NewTimer}};
 
 handle_info({timer_cache, PauseTime}, #{timer_cache := T} = State) ->
