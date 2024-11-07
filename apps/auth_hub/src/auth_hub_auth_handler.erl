@@ -21,7 +21,7 @@ handle_post(<<"POST">>, true, Req, get_roles) ->
     ?LOG_DEBUG("Post reply ~p", [HttpCode]),
     RespBody = jsone:encode(RespMap),
     cowboy_req:reply(HttpCode, #{<<"content-type">> => <<"application/json; charset=UTF-8">>}, RespBody, Req);
-handle_post(<<"GET">>, false, Req, get_ldap) ->
+handle_post(<<"GET">>, _, Req, get_ldap) ->
     Sid = cowboy_req:header(<<"sid">>, Req, undefined),
     ?LOG_DEBUG("Get request get_ldap, sid  ~p", [<<Sid:4/binary, "...">>]),
     {HttpCode, RespMap} = handle_req(Sid),
