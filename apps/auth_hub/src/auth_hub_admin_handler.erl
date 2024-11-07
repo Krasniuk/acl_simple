@@ -146,19 +146,19 @@ create_users([#{<<"login">> := Login, <<"pass">> := Pass}|T], PgPid) when is_bin
             case auth_hub_pg:insert(PgPid, "create_user", [Login, PassHash]) of
                 {error, {_, _, _, unique_violation, _, [{constraint_name,<<"unique_pass">>}|_]} = Reason} ->
                     ?LOG_ERROR("create_users incorrect pass ~p", [Reason]),
-                    [#{<<"login">> => Login, <<"saccess">> => false, <<"result">> => <<"this pass is using now">>} | create_users(T, PgPid)];
+                    [?RESP_FAIL_USERS(Login, <<"this pass is using now">>) | create_users(T, PgPid)];
                 {error, {_, _, _, unique_violation, _, [{constraint_name,<<"login_pk">>}|_]} = Reason} ->
                     ?LOG_ERROR("create_users incorrect pass ~p", [Reason]),
-                    [#{<<"login">> => Login, <<"saccess">> => false, <<"result">> => <<"this login is using now">>} | create_users(T, PgPid)];
+                    [?RESP_FAIL_USERS(Login, <<"this login is using now">>) | create_users(T, PgPid)];
                 {error, Reason} ->
                     ?LOG_ERROR("create_users db error ~p", [Reason]),
-                    [#{<<"login">> => Login, <<"saccess">> => false, <<"result">> => <<"invalid db response">>} | create_users(T, PgPid)];
+                    [?RESP_FAIL_USERS(Login, <<"invalid db response">>) | create_users(T, PgPid)];
                 {ok, 1} ->
                     [#{<<"login">> => Login, <<"success">> => true} | create_users(T, PgPid)]
             end;
         false ->
             ?LOG_ERROR("create_users invalid params, login ~p", [Login]),
-            [#{<<"login">> => Login, <<"saccess">> => false, <<"reason">> => <<"invalid params">>} | create_users(T, PgPid)]
+            [?RESP_FAIL_USERS(Login, <<"invalid params">>) | create_users(T, PgPid)]
     end;
 create_users([_OtherMap|T], PgPid) -> create_users(T, PgPid).
 

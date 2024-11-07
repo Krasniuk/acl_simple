@@ -26,6 +26,7 @@
 -define(RESP_SUCCESS(Info), #{<<"success">> => #{<<"info">> => Info}}).
 -define(RESP_SUCCESS_ROLES(SubSys, RolesList), #{<<"success">> => #{<<"subsystem">> => SubSys, <<"roles">> => RolesList}}).
 -define(RESP_SUCCESS_LOGIN(Login), #{<<"success">> => #{<<"login">> => Login}}).
+-define(RESP_FAIL_USERS(Login, Result), #{<<"login">> => Login, <<"saccess">> => false, <<"result">> => Result}).
 -define(RESP_FAIL(Info), #{<<"fail">> => #{<<"info">> => Info}}).
 
 -define(SQL_DELETE_SIDS, "DELETE FROM sids WHERE").
