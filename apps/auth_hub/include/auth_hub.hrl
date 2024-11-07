@@ -11,7 +11,7 @@
 -define(SERVICE_ROLES, #{
     <<"create_users">> => [<<"am">>, <<"cr">>],
     <<"delete_users">> => [<<"am">>, <<"dl">>]
-    }).
+}).
 
 -define(JSON_ERROR(Req),                  #{<<"fail">> => #{<<"info">> => Req}}).
 -define(JSON_OK,                          #{<<"success">> => #{<<"info">> => <<"ok">>}}).

@@ -160,7 +160,7 @@ consume_handler(Channel, Limit, Queue) ->
     case amqp_channel:call(Channel, Get) of
         {'basic.get_empty', <<>>} ->
             ok;
-        {#'basic.get_ok'{delivery_tag = Tag}, Content} ->
+        {#'basic.get_ok'{delivery_tag = _Tag}, Content} ->
             {amqp_msg, _, MsgRaw} = Content,
             ?LOG_INFO("Resp_RabbitMQ = ~p", [MsgRaw]),
             consume_handler(Channel, Limit-1, Queue)

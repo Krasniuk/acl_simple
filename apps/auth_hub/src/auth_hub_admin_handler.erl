@@ -63,7 +63,7 @@ handle_body(Body, RolesTab) ->
                             ?LOG_ERROR("Absent roles ~p in ~p", [PermitRoles, Roles]),
                             {401, ?RESP_FAIL(<<"absent role">>)};
                         true ->
-                            handle_method(BodyMap)
+                            handle_method(Method, BodyMap)
                     end
             end;
         {ok, OtherMap, _} ->
@@ -71,15 +71,21 @@ handle_body(Body, RolesTab) ->
             {422, ?JSON_ERROR(<<"absent needed params">>)}
     end.
 
-handle_method(_BodyMap) ->
-    {200, ?RESP_SUCCESS(<<"ok">>)}.
-
 -spec handle_method(binary(), map()) -> {integer(), binary()}.
-handle_method(<<"user_add">>, Map) ->
-    [{_, Pid}] = ets:lookup(auth_hub, auth_hub_server),
-    #{<<"user">> := NewUser, <<"passhash">> := PassHash} = Map,
-    Reply = gen_server:call(Pid, {user_add, NewUser, PassHash}),
-    {200, jsone:encode(Reply)};
+handle_method(<<"create_users">>, #{<<"users">> := ListMap}) when is_list(ListMap) ->
+    try poolboy:checkout(pg_pool, 1000) of
+        full ->
+            ?LOG_ERROR("No workers in pg_pool", []),
+            {429, ?RESP_FAIL(<<"too many requests">>)};
+        WorkerPid ->
+            Reply = create_users(ListMap, WorkerPid),
+            ok = poolboy:checkin(pg_pool, WorkerPid),
+            {200, #{<<"users">> => Reply}}
+    catch
+        exit:{timeout, Reason} ->
+            ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
+            {429, ?RESP_FAIL(<<"too many requests">>)}
+    end;
 handle_method(<<"user_delete">>, Map) ->
     [{_, Pid}] = ets:lookup(auth_hub, auth_hub_server),
     User = maps:get(<<"user">>, Map),
@@ -121,4 +127,49 @@ handle_method(<<"delete_allow_roles">>, Map) ->
     [{_, Pid}] = ets:lookup(auth_hub, auth_hub_server),
     #{<<"roles">> := ListRoles} = Map,
     Reply = gen_server:call(Pid, {delete_allow_roles, ListRoles}),
-    {200, jsone:encode(Reply)}.
+    {200, jsone:encode(Reply)};
+handle_method(_Method, _OtherBody) ->
+    ?LOG_ERROR("Incorrect body or method", []),
+    {422, ?JSON_ERROR(<<"absent needed params">>)}.
+
+
+-spec create_users(list(), pid()) -> list().
+create_users([], _PgPid) -> [];
+create_users([#{<<"login">> := Login, <<"pass">> := Pass}|T], PgPid) when is_binary(Login) and is_binary(Pass) ->
+    ValidLogin = valid_login(Login),
+    ValidPass = valid_pass(Pass),
+    case not(lists:member(false, [ValidLogin, ValidPass])) of
+        true ->
+            [{salt, Salt}] = ets:lookup(opts, salt),
+            SaltBin = list_to_binary(Salt),
+            PassHash = io_lib:format("~64.16.0b", [binary:decode_unsigned(crypto:hash(sha256, <<Pass/binary, SaltBin/binary>>))]),
+            case auth_hub_pg:insert(PgPid, "create_user", [Login, PassHash]) of
+                {error, {_, _, _, unique_violation, _, [{constraint_name,<<"unique_pass">>}|_]} = Reason} ->
+                    ?LOG_ERROR("create_users incorrect pass ~p", [Reason]),
+                    [#{<<"login">> => Login, <<"saccess">> => false, <<"result">> => <<"this pass is using now">>} | create_users(T, PgPid)];
+                {error, {_, _, _, unique_violation, _, [{constraint_name,<<"login_pk">>}|_]} = Reason} ->
+                    ?LOG_ERROR("create_users incorrect pass ~p", [Reason]),
+                    [#{<<"login">> => Login, <<"saccess">> => false, <<"result">> => <<"this login is using now">>} | create_users(T, PgPid)];
+                {error, Reason} ->
+                    ?LOG_ERROR("create_users db error ~p", [Reason]),
+                    [#{<<"login">> => Login, <<"saccess">> => false, <<"result">> => <<"invalid db response">>} | create_users(T, PgPid)];
+                {ok, 1} ->
+                    [#{<<"login">> => Login, <<"success">> => true} | create_users(T, PgPid)]
+            end;
+        false ->
+            ?LOG_ERROR("create_users invalid params, login ~p", [Login]),
+            [#{<<"login">> => Login, <<"saccess">> => false, <<"reason">> => <<"invalid params">>} | create_users(T, PgPid)]
+    end;
+create_users([_OtherMap|T], PgPid) -> create_users(T, PgPid).
+
+-spec valid_login(binary()) -> boolean().
+valid_login(Login) when (byte_size(Login) > 2) and (byte_size(Login) < 50) ->
+    Len = byte_size(Login),
+    {match, [{0, Len}]} =:= re:run(Login, "[a-zA-Z][a-zA-Z_\\d]*", []);
+valid_login(_Login) -> false.
+
+-spec valid_pass(binary()) -> boolean().
+valid_pass(Pass) when (byte_size(Pass) >= 8) and (byte_size(Pass) < 100) ->
+    Len = byte_size(Pass),
+    {match, [{0, Len}]} =:= re:run(Pass, "[a-zA-Z_\\d-#&$%]*", []);
+valid_pass(_Other) -> false.
