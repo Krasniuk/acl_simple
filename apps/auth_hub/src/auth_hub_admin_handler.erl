@@ -86,11 +86,20 @@ handle_method(<<"create_users">>, #{<<"users">> := ListMap}) when is_list(ListMa
             ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
             {429, ?RESP_FAIL(<<"too many requests">>)}
     end;
-handle_method(<<"user_delete">>, Map) ->
-    [{_, Pid}] = ets:lookup(auth_hub, auth_hub_server),
-    User = maps:get(<<"user">>, Map),
-    Reply = gen_server:call(Pid, {user_delete, User}),
-    {200, jsone:encode(Reply)};
+handle_method(<<"delete_users">>, #{<<"logins">> := ListMap}) when is_list(ListMap) ->
+    try poolboy:checkout(pg_pool, 1000) of
+        full ->
+            ?LOG_ERROR("No workers in pg_pool", []),
+            {429, ?RESP_FAIL(<<"too many requests">>)};
+        WorkerPid ->
+            Reply = delete_users(ListMap, WorkerPid),
+            ok = poolboy:checkin(pg_pool, WorkerPid),
+            {200, #{<<"users">> => Reply}}
+    catch
+        exit:{timeout, Reason} ->
+            ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
+            {429, ?RESP_FAIL(<<"too many requests">>)}
+    end;
 handle_method(<<"show_all_users">>, _Map) ->
     [{_, Pid}] = ets:lookup(auth_hub, auth_hub_server),
     Reply = gen_server:call(Pid, {show_all_users}),
@@ -173,3 +182,41 @@ valid_pass(Pass) when (byte_size(Pass) >= 8) and (byte_size(Pass) < 100) ->
     Len = byte_size(Pass),
     {match, [{0, Len}]} =:= re:run(Pass, "[a-zA-Z_\\d-#&$%]*", []);
 valid_pass(_Other) -> false.
+
+
+
+-spec delete_users(list(), pid()) -> list().
+delete_users([], _WorkerPid) -> [];
+delete_users([Login|T], PgPid) when is_binary(Login) ->
+    case valid_login(Login) of
+        false ->
+            ?LOG_ERROR("delete_users invalid params, login ~p", [Login]),
+            [?RESP_FAIL_USERS(Login, <<"invalid login">>) | delete_users(T, PgPid)];
+        true ->
+            case auth_hub_pg:delete(PgPid, "delete_user", [Login]) of
+                {error, Reason} ->
+                    ?LOG_ERROR("delete_users db error ~p", [Reason]),
+                    [?RESP_FAIL_USERS(Login, <<"invalid db response">>) | delete_users(T, PgPid)];
+                {ok, _Column, [{<<"ok">>}]} ->
+                    ok = ets_delete_sid(Login),
+                    [#{<<"login">> => Login, <<"success">> => true} | delete_users(T, PgPid)]
+            end
+    end;
+delete_users([Login|T], PgPid) ->
+    ?LOG_ERROR("delete_users invalid params, login ~p", [Login]),
+    [?RESP_FAIL_USERS(Login, <<"invalid login">>) | delete_users(T, PgPid)].
+
+-spec ets_delete_sid(binary()) -> ok.
+ets_delete_sid(Login) ->
+    SidList = ets:select(sids_cache, [{
+        {'$1', '$2', '_', '_'},
+        [{'=:=', '$2', Login}],
+        ['$1']
+    }]),
+    case SidList of
+        [Sid] ->
+            true = ets:delete(sids_cache, Sid);
+        [] ->
+            ok
+    end,
+    ok.

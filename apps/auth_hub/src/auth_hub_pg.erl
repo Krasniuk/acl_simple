@@ -6,7 +6,7 @@
 
 -export([start_link/1]). % Export for poolboy
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]). % Export for gen_server
--export([select/2, insert/2, insert/3, delete/2, sql_req_not_prepared/2, sql_req_not_prepared/3, get_roles/1]).
+-export([select/2, insert/2, insert/3, delete/2, delete/3, sql_req_not_prepared/2, sql_req_not_prepared/3, get_roles/1]).
 
 % ====================================================
 % Clients functions
@@ -86,6 +86,10 @@ delete(Statement, Args) ->
             ?LOG_ERROR("Error, no workers in pg_pool ~p", [Reason]),
             {error, {timeout_pull, <<"too many requests">>}}
     end.
+
+-spec delete(pid(), list(), list()) -> {ok, integer()} | {error, Reason :: tuple()|no_connect}.
+delete(WorkerPid, Statement, Args) ->
+    gen_server:call(WorkerPid, {delete, Statement, Args}).
 
 -spec sql_req_not_prepared(list(), list()) -> {ok, Colomn::list(), list()}| {ok, list()} | {error, term()} | {error, {timeout_pull, binary()}}.
 sql_req_not_prepared(Sql, Args) ->
@@ -197,6 +201,7 @@ parse(Conn) ->
     {ok, _} = epgsql:parse(Conn, "insert_sid", "INSERT INTO sids (login, sid, ts_end) VALUES ($1, $2, $3)", [varchar, varchar, timestamp]),
     {ok, _} = epgsql:parse(Conn, "get_roles", "SELECT subsystem, role FROM roles WHERE login=$1", [varchar]),
     {ok, _} = epgsql:parse(Conn, "update_sid", "UPDATE sids SET sid=$2, ts_end=$3 WHERE login=$1", [varchar, varchar, timestamp]),
+    {ok, _} = epgsql:parse(Conn, "delete_user", "SELECT * FROM delete_user($1)", [varchar]),
 
     {ok, _} = epgsql:parse(Conn, "create_user", "INSERT INTO users (login, passhash) VALUES ($1, $2)", [varchar, varchar]),
 
