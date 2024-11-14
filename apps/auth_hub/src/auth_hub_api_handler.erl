@@ -1,4 +1,4 @@
--module(auth_hub_admin_handler).
+-module(auth_hub_api_handler).
 -author('Mykhailo Krasniuk <miha.190901@gmail.com>').
 
 -export([init/2]).
@@ -100,10 +100,17 @@ handle_method(<<"delete_users">>, #{<<"logins">> := ListMap}) when is_list(ListM
             ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
             {429, ?RESP_FAIL(<<"too many requests">>)}
     end;
-handle_method(<<"show_all_users">>, _Map) ->
-    [{_, Pid}] = ets:lookup(auth_hub, auth_hub_server),
-    Reply = gen_server:call(Pid, {show_all_users}),
-    {200, jsone:encode(Reply)};
+handle_method(<<"get_all_users_info">>, _Map) ->
+    case auth_hub_pg:select("get_all_users_info", []) of
+        {error, Reason} ->
+            ?LOG_ERROR("Invalid db response, ~p", [Reason]),
+            {502, ?RESP_FAIL(<<"invalid db response">>)};
+        {ok, _Colons, DbResp} ->
+            UsersMap = parse_users_info(DbResp, #{}),
+            Logins = maps:keys(UsersMap),
+            ListResp = construct_response(Logins, UsersMap),
+            {200, ?RESP_SUCCESS(ListResp)}
+    end;
 % --- roles ---
 handle_method(<<"roles_add">>, Map) ->
     [{_, Pid}] = ets:lookup(auth_hub, auth_hub_server),
@@ -142,9 +149,54 @@ handle_method(_Method, _OtherBody) ->
     {422, ?JSON_ERROR(<<"absent needed params">>)}.
 
 
+%% ========= get_all_users_info =========
+
+-spec parse_users_info(DbResp :: list(), map()) -> map().
+parse_users_info([], Result) -> Result;
+parse_users_info([{Login, null, null} | T], Result) ->
+    ListTab = ets:tab2list(subsys_cache),
+    SubSystems = add_subsyses(ListTab, #{}),
+    Result1 = Result#{Login => SubSystems},
+    parse_users_info(T, Result1);
+parse_users_info([{Login, SubSys, Role} | T], Result) ->
+    Result1 = case maps:get(Login, Result, null) of
+                  null ->
+                      ListTab = ets:tab2list(subsys_cache),
+                      SubSystems = add_subsyses(ListTab, #{}),
+                      Result#{Login => SubSystems#{SubSys => [Role]}};
+                  #{SubSys := Roles} = SubSyses ->
+                      Result#{Login := SubSyses#{SubSys := [Role|Roles]}}
+              end,
+    parse_users_info(T, Result1).
+
+-spec add_subsyses(list(), map()) -> map().
+add_subsyses([], Result) -> Result;
+add_subsyses([{SubSys}|T], Result) ->
+    Result1 = Result#{SubSys => []},
+    add_subsyses(T, Result1).
+
+-spec construct_response(list(), map()) -> list().
+construct_response([], _UsersMap) -> [];
+construct_response([Login | T], UsersMap) ->
+    #{Login := SubSystems} = UsersMap,
+    SidList = ets:select(sids_cache, [{
+        {'$1', '$2', '_', '_'},
+        [{'=:=', '$2', Login}],
+        ['$1']
+    }]),
+    ActiveSid = case SidList of
+                    [] -> null;
+                    [Sid] -> Sid
+                end,
+    MapResp = #{<<"login">> => Login, <<"subsystem_roles">> => SubSystems, <<"active_sid">> => ActiveSid},
+    [MapResp | construct_response(T, UsersMap)].
+
+
+%% ========= create_users =========
+
 -spec create_users(list(), pid()) -> list().
 create_users([], _PgPid) -> [];
-create_users([#{<<"login">> := Login, <<"pass">> := Pass}|T], PgPid) when is_binary(Login) and is_binary(Pass) ->
+create_users([#{<<"login">> := Login, <<"pass">> := Pass} | T], PgPid) when is_binary(Login) and is_binary(Pass) ->
     ValidLogin = valid_login(Login),
     ValidPass = valid_pass(Pass),
     case not(lists:member(false, [ValidLogin, ValidPass])) of
@@ -153,10 +205,10 @@ create_users([#{<<"login">> := Login, <<"pass">> := Pass}|T], PgPid) when is_bin
             SaltBin = list_to_binary(Salt),
             PassHash = io_lib:format("~64.16.0b", [binary:decode_unsigned(crypto:hash(sha256, <<Pass/binary, SaltBin/binary>>))]),
             case auth_hub_pg:insert(PgPid, "create_user", [Login, PassHash]) of
-                {error, {_, _, _, unique_violation, _, [{constraint_name,<<"unique_pass">>}|_]} = Reason} ->
+                {error, {_, _, _, unique_violation, _, [{constraint_name, <<"unique_pass">>} | _]} = Reason} ->
                     ?LOG_ERROR("create_users incorrect pass ~p", [Reason]),
                     [?RESP_FAIL_USERS(Login, <<"this pass is using now">>) | create_users(T, PgPid)];
-                {error, {_, _, _, unique_violation, _, [{constraint_name,<<"login_pk">>}|_]} = Reason} ->
+                {error, {_, _, _, unique_violation, _, [{constraint_name, <<"login_pk">>} | _]} = Reason} ->
                     ?LOG_ERROR("create_users incorrect pass ~p", [Reason]),
                     [?RESP_FAIL_USERS(Login, <<"this login is using now">>) | create_users(T, PgPid)];
                 {error, Reason} ->
@@ -169,7 +221,7 @@ create_users([#{<<"login">> := Login, <<"pass">> := Pass}|T], PgPid) when is_bin
             ?LOG_ERROR("create_users invalid params, login ~p", [Login]),
             [?RESP_FAIL_USERS(Login, <<"invalid params">>) | create_users(T, PgPid)]
     end;
-create_users([_OtherMap|T], PgPid) -> create_users(T, PgPid).
+create_users([_OtherMap | T], PgPid) -> create_users(T, PgPid).
 
 -spec valid_login(binary()) -> boolean().
 valid_login(Login) when (byte_size(Login) > 2) and (byte_size(Login) < 50) ->
@@ -184,10 +236,11 @@ valid_pass(Pass) when (byte_size(Pass) >= 8) and (byte_size(Pass) < 100) ->
 valid_pass(_Other) -> false.
 
 
+%% ========= delete_users =========
 
 -spec delete_users(list(), pid()) -> list().
 delete_users([], _WorkerPid) -> [];
-delete_users([Login|T], PgPid) when is_binary(Login) ->
+delete_users([Login | T], PgPid) when is_binary(Login) ->
     case valid_login(Login) of
         false ->
             ?LOG_ERROR("delete_users invalid params, login ~p", [Login]),
@@ -202,7 +255,7 @@ delete_users([Login|T], PgPid) when is_binary(Login) ->
                     [#{<<"login">> => Login, <<"success">> => true} | delete_users(T, PgPid)]
             end
     end;
-delete_users([Login|T], PgPid) ->
+delete_users([Login | T], PgPid) ->
     ?LOG_ERROR("delete_users invalid params, login ~p", [Login]),
     [?RESP_FAIL_USERS(Login, <<"invalid login">>) | delete_users(T, PgPid)].
 

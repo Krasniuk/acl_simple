@@ -204,6 +204,7 @@ parse(Conn) ->
     {ok, _} = epgsql:parse(Conn, "delete_user", "SELECT * FROM delete_user($1)", [varchar]),
 
     {ok, _} = epgsql:parse(Conn, "create_user", "INSERT INTO users (login, passhash) VALUES ($1, $2)", [varchar, varchar]),
+    {ok, _} = epgsql:parse(Conn, "get_all_users_info", "SELECT u.login, r.subsystem, r.role FROM roles r right outer join users u on r.login = u.login", []),
 
     ok.
 

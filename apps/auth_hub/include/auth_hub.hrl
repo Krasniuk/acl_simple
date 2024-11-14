@@ -9,8 +9,9 @@
 
 -define(SERVICE_SUBSYSTEM, <<"authHub">>).
 -define(SERVICE_ROLES, #{
-    <<"create_users">> => [<<"am">>, <<"cr">>],
-    <<"delete_users">> => [<<"am">>, <<"dl">>]
+    <<"create_users">> =>        [<<"am">>, <<"cr">>],
+    <<"delete_users">> =>        [<<"am">>, <<"dl">>],
+    <<"get_all_users_info">> =>  [<<"am">>]
 }).
 
 -define(JSON_ERROR(Req),                  #{<<"fail">> => #{<<"info">> => Req}}).
