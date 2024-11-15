@@ -104,7 +104,7 @@ handle_method(<<"create_users">>, #{<<"users">> := ListMap}) when is_list(ListMa
         WorkerPid ->
             Reply = create_users(ListMap, WorkerPid),
             ok = poolboy:checkin(pg_pool, WorkerPid),
-            {200, #{<<"users">> => Reply}}
+            {200, #{<<"results">> => Reply}}
     catch
         exit:{timeout, Reason} ->
             ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
@@ -118,7 +118,7 @@ handle_method(<<"delete_users">>, #{<<"logins">> := ListMap}) when is_list(ListM
         WorkerPid ->
             Reply = delete_users(ListMap, WorkerPid),
             ok = poolboy:checkin(pg_pool, WorkerPid),
-            {200, #{<<"users">> => Reply}}
+            {200, #{<<"results">> => Reply}}
     catch
         exit:{timeout, Reason} ->
             ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
@@ -135,19 +135,23 @@ handle_method(<<"get_users_all_info">>, _Map) ->
             ListResp = construct_response(Logins, UsersMap),
             {200, ?RESP_SUCCESS(ListResp)}
     end;
+
 % --- roles ---
-handle_method(<<"roles_add">>, Map) ->
-    [{_, Pid}] = ets:lookup(auth_hub, auth_hub_server),
-    User = maps:get(<<"user">>, Map),
-    Roles = maps:get(<<"roles">>, Map),
-    Reply = gen_server:call(Pid, {roles_add, User, Roles}),
-    {200, jsone:encode(Reply)};
-handle_method(<<"roles_delete">>, Map) ->
-    [{_, Pid}] = ets:lookup(auth_hub, auth_hub_server),
-    User = maps:get(<<"user">>, Map),
-    Roles = maps:get(<<"roles">>, Map),
-    Reply = gen_server:call(Pid, {roles_delete, User, Roles}),
-    {200, jsone:encode(Reply)};
+handle_method(<<"change_roles">>, #{<<"operations">> := ListOperations}) ->
+    try poolboy:checkout(pg_pool, 1000) of
+        full ->
+            ?LOG_ERROR("No workers in pg_pool", []),
+            {429, ?RESP_FAIL(<<"too many requests">>)};
+        WorkerPid ->
+            Reply = operations_change_roles(ListOperations),
+            ok = poolboy:checkin(pg_pool, WorkerPid),
+            {200, #{<<"results">> => Reply}}
+    catch
+        exit:{timeout, Reason} ->
+            ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
+            {429, ?RESP_FAIL(<<"too many requests">>)}
+    end;
+
 % --- allow_roles ---
 handle_method(<<"show_allow_roles">>, _Map) ->
     [{_, Pid}] = ets:lookup(auth_hub, auth_hub_server),
@@ -166,6 +170,111 @@ handle_method(<<"delete_allow_roles">>, Map) ->
 handle_method(_Method, _OtherBody) ->
     ?LOG_ERROR("Incorrect body or method", []),
     {422, ?JSON_ERROR(<<"invalid request format">>)}.
+
+
+
+%% ========= change_roles =========
+
+-spec operations_change_roles(list()) -> list().
+operations_change_roles([]) -> [];
+operations_change_roles([#{<<"method">> := Method, <<"login">> := Login, <<"subsystem">> := SubSys, <<"roles">> := Roles} = MapReq|T]) when
+        (Method == <<"delete_roles">>) or (Method == <<"add_roles">>) ->
+    case {validation_param(Login, SubSys, Roles), Method} of
+        {false, _} ->
+            ?LOG_ERROR("operations_change_roles invalid params value", []),
+            MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"invalid params value">>},
+            [MapResp | operations_change_roles(T)];
+        {true, <<"delete_roles">>} ->
+            LoginStr = binary_to_list(Login),
+            SubSysStr = binary_to_list(SubSys),
+            case generate_delete_sql(first, Roles, ?SQL_DELETE_ROLES(LoginStr, SubSysStr)) of
+                null ->
+                    MapResp = MapReq#{<<"success">> => true},
+                    [MapResp | operations_change_roles(T)];
+                Sql ->
+                    case auth_hub_pg:sql_req_not_prepared(Sql, []) of
+                        {error, Reason} ->
+                            ?LOG_ERROR("operations_change_roles db error ~p", [Reason]),
+                            MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"invalid db resp">>},
+                            [MapResp | operations_change_roles(T)];
+                        {ok, _Count} ->
+                            MapResp = MapReq#{<<"success">> => true},
+                            [MapResp | operations_change_roles(T)]
+                    end
+            end;
+        {true, <<"add_roles">>} ->
+            case generate_insert_sql(first, Roles, Login, SubSys, ?SQL_INSERT_ROLES) of
+                null ->
+                    MapResp = MapReq#{<<"success">> => true},
+                    [MapResp | operations_change_roles(T)];
+                Sql ->
+                    case auth_hub_pg:sql_req_not_prepared(Sql, []) of
+                        {error, {_, _, _, unique_violation, _, _} = Reason} ->
+                            ?LOG_ERROR("operations_change_roles user have one of this roles, ~p", [Reason]),
+                            MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"user have one of this roles">>},
+                            [MapResp | operations_change_roles(T)];
+                        {error, {_, _, _, foreign_key_violation, _, _} = Reason} ->
+                            ?LOG_ERROR("operations_change_roles invalid login, ~p", [Reason]),
+                            MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"invalid login">>},
+                            [MapResp | operations_change_roles(T)];
+                        {error, Reason} ->
+                            ?LOG_ERROR("operations_change_roles db error ~p", [Reason]),
+                            MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"invalid db resp">>},
+                            [MapResp | operations_change_roles(T)];
+                        {ok, _Count} ->
+                            MapResp = MapReq#{<<"success">> => true},
+                            [MapResp | operations_change_roles(T)]
+                    end
+            end
+    end;
+operations_change_roles([_OtherMap|T]) ->
+    operations_change_roles(T).
+
+-spec validation_param(term(), term(), term()) -> boolean().
+validation_param(Login, SubSys, Roles) when is_binary(Login) and is_binary(SubSys) and is_list(Roles)->
+    ValidSubSys = ets:member(subsys_cache, SubSys),
+    ValidRoles = valid_roles(Roles),
+    ValidLogin = valid_login(Login),
+    ValidSubSys and ValidLogin and ValidRoles;
+validation_param(_Login, _SubSys, _Roles) ->
+    false.
+
+-spec valid_roles(list()) -> boolean().
+valid_roles([]) -> true;
+valid_roles([Role|T]) when is_binary(Role) ->
+    case {match, [{0, byte_size(Role)}]} =:= re:run(Role, "[a-z]{2}", []) of
+        true ->
+            valid_roles(T);
+        false ->
+            false
+    end;
+valid_roles(_) ->
+    false.
+
+-spec generate_delete_sql(first | second, list(), string()) -> string() | null.
+generate_delete_sql(first, [], _Sql) -> null;
+generate_delete_sql(second, [], Sql) ->
+    ?LOG_DEBUG("Sql = ~p", [Sql ++ ")"]),
+    Sql ++ ")";
+generate_delete_sql(first, [Role | T], Sql) ->
+    Sql1 = Sql ++ "role='" ++ binary_to_list(Role) ++ "'",
+    ?LOG_DEBUG("Sql = ~p", [Sql1]),
+    generate_delete_sql(second, T, Sql1);
+generate_delete_sql(second, [Role | T], Sql) ->
+    Sql1 = Sql ++ " or role='" ++ binary_to_list(Role) ++ "'",
+    ?LOG_DEBUG("Sql = ~p", [Sql1]),
+    generate_delete_sql(second, T, Sql1).
+
+-spec generate_insert_sql(first | second, list(), binary(), binary(), string()) -> string() | null.
+generate_insert_sql(first, [], _Login, _Subsys, _Sql) -> null;
+generate_insert_sql(second, [], _Login, _Subsys, Sql) -> Sql;
+generate_insert_sql(first, [Role | T], Login, Subsys, Sql) ->
+    Sql1 = Sql ++ "('" ++ binary_to_list(Login) ++ "', '" ++ binary_to_list(Subsys) ++ "', '" ++ binary_to_list(Role) ++ "')",
+    generate_insert_sql(second, T, Login, Subsys, Sql1);
+generate_insert_sql(second, [Role | T], Login, Subsys, Sql) ->
+    Sql1 = Sql ++ ", ('" ++ binary_to_list(Login) ++ "', '" ++ binary_to_list(Subsys) ++ "', '" ++ binary_to_list(Role) ++ "')",
+    generate_insert_sql(second, T, Login, Subsys, Sql1).
+
 
 
 %% ========= get_all_users_info =========
@@ -211,6 +320,7 @@ construct_response([Login | T], UsersMap) ->
     [MapResp | construct_response(T, UsersMap)].
 
 
+
 %% ========= create_users =========
 
 -spec create_users(list(), pid()) -> list().
@@ -253,6 +363,7 @@ valid_pass(Pass) when (byte_size(Pass) >= 8) and (byte_size(Pass) < 100) ->
     Len = byte_size(Pass),
     {match, [{0, Len}]} =:= re:run(Pass, "[a-zA-Z_\\d-#&$%]*", []);
 valid_pass(_Other) -> false.
+
 
 
 %% ========= delete_users =========
