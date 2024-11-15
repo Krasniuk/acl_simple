@@ -21,6 +21,8 @@ start(normal, _StartArgs) ->
     {ok, Port} = application:get_env(auth_hub, listen_port),
     Dispatch = cowboy_router:compile([
         {'_', [
+            {"/api/users/all_info", auth_hub_api_handler, [get_users_all_info]},
+            {"/api/change_roles", auth_hub_api_handler, [change_roles]},
             {"/api", auth_hub_api_handler, []},
             {"/session/open", auth_hub_sid_handler, [open_session]},
             {"/session/check", auth_hub_sid_handler, [check_sid]},

@@ -5,30 +5,36 @@
 
 -include("auth_hub.hrl").
 
+-spec init(tuple(), list()) -> term().
 init(Req, Opts) ->
-    Method = cowboy_req:method(Req),
-    HasBody = cowboy_req:has_body(Req),
-    Resp = handle_post(Method, HasBody, Req),
+    {HttpCode, RespMap} = handle_http_method(Req, Opts),
+    RespBody = jsone:encode(RespMap),
+    Resp = cowboy_req:reply(HttpCode, #{<<"content-type">> => <<"application/json; charset=UTF-8">>}, RespBody, Req),
     {ok, Resp, Opts}.
 
+-spec handle_http_method(tuple(), list()) -> {integer(), map()}.
+handle_http_method(Req, Opts) ->
+    case {cowboy_req:method(Req), Opts} of
+        {<<"POST">>, []} ->
+            {HttpCode, RespMap} = handle_sid(null, Req),
+            ?LOG_DEBUG("Post reply ~p", [HttpCode]),
+            {HttpCode, RespMap};
+        {<<"POST">>, [change_roles]} ->
+            {HttpCode, RespMap} = handle_sid(change_roles, Req),
+            ?LOG_DEBUG("Post reply ~p", [HttpCode]),
+            {HttpCode, RespMap};
+        {<<"GET">>, [get_users_all_info]} ->
+            {HttpCode, RespMap} = handle_sid(get_users_all_info, Req),
+            ?LOG_DEBUG("Get reply ~p", [HttpCode]),
+            {HttpCode, RespMap};
+        {Method, _} ->
+            ?LOG_ERROR("Method ~p not allowed ~p~n", [Method, Req]),
+            {405, ?RESP_FAIL(<<"method not allowed">>)}
+    end.
 
-handle_post(<<"POST">>, true, Req) ->
-    {ok, Body, _Req} = cowboy_req:read_body(Req),
+-spec handle_sid(atom(), tuple()) -> {integer(), map()}.
+handle_sid(UrlCase, Req) ->
     Sid = cowboy_req:header(<<"sid">>, Req, undefined),
-    ?LOG_DEBUG("Post request ~p", [Body]),
-    {HttpCode, RespMap} = handle_req(Body, Sid),
-    ?LOG_DEBUG("Post reply ~p", [HttpCode]),
-    RespBody = jsone:encode(RespMap),
-    cowboy_req:reply(HttpCode, #{<<"content-type">> => <<"application/json; charset=UTF-8">>}, RespBody, Req);
-handle_post(<<"POST">>, false, Req) ->
-    ?LOG_ERROR("Missing body ~p~n", [Req]),
-    cowboy_req:reply(400, #{}, <<"Missing body.">>, Req);
-handle_post(Method, _, Req) ->
-    ?LOG_ERROR("Method ~p not allowed ~p~n", [Method, Req]),
-    cowboy_req:reply(405, Req).
-
--spec handle_req(binary(), binary()|undefined) -> {integer(), map()}.
-handle_req(Body, Sid) ->
     case auth_hub_helper:check_sid(Sid) of
         {Sid, Login, null, TsEnd} ->
             case auth_hub_pg:get_roles(Login) of
@@ -36,39 +42,57 @@ handle_req(Body, Sid) ->
                     {502, ?RESP_FAIL(<<"invalid db resp">>)};
                 RolesMap ->
                     true = ets:insert(sids_cache, {Sid, Login, RolesMap, TsEnd}),
-                    handle_body(Body, RolesMap)
+                    handle_body(UrlCase, RolesMap, Req)
             end;
         {Sid, _Login, RolesMap, _TsEnd} ->
-            handle_body(Body, RolesMap);
+            handle_body(UrlCase, RolesMap, Req);
         _Error ->
             ?LOG_ERROR("sid is invalid or legacy", []),
             {403, ?RESP_FAIL(<<"sid is invalid or legacy">>)}
     end.
 
--spec handle_body(binary(), map()) -> {integer(), map()}.
-handle_body(Body, RolesTab) ->
-    case jsone:try_decode(Body) of
-        {error, Reason} ->
-            ?LOG_ERROR("Decode error, ~p", [Reason]),
-            {400, ?JSON_ERROR(<<"invalid request format">>)};
-        {ok, #{<<"method">> := Method} = BodyMap, _} ->
-            Roles = maps:get(?SERVICE_SUBSYSTEM, RolesTab, []),
-            case maps:get(Method, ?SERVICE_ROLES, undefined) of
-                undefined ->
-                    ?LOG_ERROR("Invalid method", []),
-                    {422, ?RESP_FAIL(<<"invalid method">>)};
-                PermitRoles ->
-                    case auth_hub_helper:check_roles(Roles, PermitRoles) of
-                        false ->
-                            ?LOG_ERROR("Absent roles ~p in ~p", [PermitRoles, Roles]),
-                            {401, ?RESP_FAIL(<<"absent role">>)};
-                        true ->
-                            handle_method(Method, BodyMap)
-                    end
+-spec handle_body(atom(), map(), tuple()) -> {integer(), map()}.
+handle_body(get_users_all_info, RolesMap, _Req) ->
+    handle_auth(<<"get_users_all_info">>, RolesMap, #{});
+handle_body(UrlCase, RolesMap, Req) ->
+    case cowboy_req:has_body(Req) of
+        true ->
+            {ok, Body, _Req} = cowboy_req:read_body(Req),
+            case {jsone:try_decode(Body), UrlCase} of
+                {{error, Reason}, _} ->
+                    ?LOG_ERROR("Decode error, ~p", [Reason]),
+                    {400, ?JSON_ERROR(<<"invalid request format">>)};
+
+                {{ok, BodyMap, _}, change_roles} ->
+                    handle_auth(<<"change_roles">>, RolesMap, BodyMap);
+
+                {{ok, #{<<"method">> := Method} = BodyMap, _}, _} ->
+                    handle_auth(Method, RolesMap, BodyMap);
+
+                {{ok, OtherMap, _}, _} ->
+                    ?LOG_ERROR("Absent needed params ~p", [OtherMap]),
+                    {422, ?JSON_ERROR(<<"absent needed params">>)}
             end;
-        {ok, OtherMap, _} ->
-            ?LOG_ERROR("Absent needed params ~p", [OtherMap]),
-            {422, ?JSON_ERROR(<<"absent needed params">>)}
+        false ->
+            ?LOG_ERROR("Missing body ~p~n", [Req]),
+            {400, ?RESP_FAIL(<<"missing body">>)}
+    end.
+
+-spec handle_auth(binary(), map(), map()) -> {integer(), map()}.
+handle_auth(Method, RolesMap, BodyMap) ->
+    Roles = maps:get(?SERVICE_SUBSYSTEM, RolesMap, []),
+    case maps:get(Method, ?SERVICE_ROLES, undefined) of
+        undefined ->
+            ?LOG_ERROR("Invalid method", []),
+            {422, ?RESP_FAIL(<<"invalid method">>)};
+        PermitRoles ->
+            case auth_hub_helper:check_roles(Roles, PermitRoles) of
+                false ->
+                    ?LOG_ERROR("Absent roles ~p in ~p", [PermitRoles, Roles]),
+                    {401, ?RESP_FAIL(<<"absent role">>)};
+                true ->
+                    handle_method(Method, BodyMap)
+            end
     end.
 
 -spec handle_method(binary(), map()) -> {integer(), binary()}.
@@ -100,8 +124,8 @@ handle_method(<<"delete_users">>, #{<<"logins">> := ListMap}) when is_list(ListM
             ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
             {429, ?RESP_FAIL(<<"too many requests">>)}
     end;
-handle_method(<<"get_all_users_info">>, _Map) ->
-    case auth_hub_pg:select("get_all_users_info", []) of
+handle_method(<<"get_users_all_info">>, _Map) ->
+    case auth_hub_pg:select("get_users_all_info", []) of
         {error, Reason} ->
             ?LOG_ERROR("Invalid db response, ~p", [Reason]),
             {502, ?RESP_FAIL(<<"invalid db response">>)};
@@ -124,11 +148,6 @@ handle_method(<<"roles_delete">>, Map) ->
     Roles = maps:get(<<"roles">>, Map),
     Reply = gen_server:call(Pid, {roles_delete, User, Roles}),
     {200, jsone:encode(Reply)};
-handle_method(<<"show_roles">>, Map) ->
-    [{_, Pid}] = ets:lookup(auth_hub, auth_hub_server),
-    User = maps:get(<<"user">>, Map),
-    Reply = gen_server:call(Pid, {show_roles, User}),
-    {200, jsone:encode(Reply)};
 % --- allow_roles ---
 handle_method(<<"show_allow_roles">>, _Map) ->
     [{_, Pid}] = ets:lookup(auth_hub, auth_hub_server),
@@ -146,7 +165,7 @@ handle_method(<<"delete_allow_roles">>, Map) ->
     {200, jsone:encode(Reply)};
 handle_method(_Method, _OtherBody) ->
     ?LOG_ERROR("Incorrect body or method", []),
-    {422, ?JSON_ERROR(<<"absent needed params">>)}.
+    {422, ?JSON_ERROR(<<"invalid request format">>)}.
 
 
 %% ========= get_all_users_info =========
@@ -165,13 +184,13 @@ parse_users_info([{Login, SubSys, Role} | T], Result) ->
                       SubSystems = add_subsyses(ListTab, #{}),
                       Result#{Login => SubSystems#{SubSys => [Role]}};
                   #{SubSys := Roles} = SubSyses ->
-                      Result#{Login := SubSyses#{SubSys := [Role|Roles]}}
+                      Result#{Login := SubSyses#{SubSys := [Role | Roles]}}
               end,
     parse_users_info(T, Result1).
 
 -spec add_subsyses(list(), map()) -> map().
 add_subsyses([], Result) -> Result;
-add_subsyses([{SubSys}|T], Result) ->
+add_subsyses([{SubSys} | T], Result) ->
     Result1 = Result#{SubSys => []},
     add_subsyses(T, Result1).
 
