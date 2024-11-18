@@ -21,12 +21,15 @@ start(normal, _StartArgs) ->
     {ok, Port} = application:get_env(auth_hub, listen_port),
     Dispatch = cowboy_router:compile([
         {'_', [
-            {"/api/users/info",   auth_hub_api_handler, [<<"/users/info">>]},
-            {"/api/roles/change", auth_hub_api_handler, [<<"/roles/change">>]},
-            {"/api/users",        auth_hub_api_handler, [<<"/users">>]},
-            {"/session/open", auth_hub_sid_handler, [open_session]},
-            {"/session/check", auth_hub_sid_handler, [check_sid]},
-            {"/authorization/roles", auth_hub_auth_handler, [get_roles]},
+            {"/api/users/info",        auth_hub_api_handler, [<<"/users/info">>]},
+            {"/api/users",             auth_hub_api_handler, [<<"/users">>]},
+            {"/api/roles/change",      auth_hub_api_handler, [<<"/roles/change">>]},
+            {"/api/roles/allow/info",  auth_hub_api_handler, [<<"/roles/allow/info">>]},
+
+            {"/session/open",         auth_hub_sid_handler, [open_session]},
+            {"/session/check",        auth_hub_sid_handler, [check_sid]},
+
+            {"/authorization/roles",  auth_hub_auth_handler, [get_roles]},
             {"/identification/login", auth_hub_auth_handler, [get_ldap]}
         ]}
     ]),

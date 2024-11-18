@@ -15,16 +15,16 @@ init(Req, Opts) ->
 -spec handle_http_method(tuple(), list()) -> {integer(), map()}.
 handle_http_method(Req, Opts) ->
     case {cowboy_req:method(Req), Opts} of
-        {<<"POST">>, [<<"/users">>]} ->
-            {HttpCode, RespMap} = handle_sid(null, Req),
+        {<<"POST">>, [<<"/users">> = Url]} ->
+            {HttpCode, RespMap} = handle_sid(Url, Req),
             ?LOG_DEBUG("Post reply ~p", [HttpCode]),
             {HttpCode, RespMap};
-        {<<"GET">>, [<<"/users/info">>]} ->
-            {HttpCode, RespMap} = handle_sid(get_users_all_info, Req),
+        {<<"GET">>, [<<"/users/info">> = Url]} ->
+            {HttpCode, RespMap} = handle_sid(Url, Req),
             ?LOG_DEBUG("Get reply ~p", [HttpCode]),
             {HttpCode, RespMap};
-        {<<"POST">>, [<<"/roles/change">>]} ->
-            {HttpCode, RespMap} = handle_sid(null, Req),
+        {<<"POST">>, [<<"/roles/change">> = Url]} ->
+            {HttpCode, RespMap} = handle_sid(Url, Req),
             ?LOG_DEBUG("Post reply ~p", [HttpCode]),
             {HttpCode, RespMap};
         {Method, _} ->
@@ -33,7 +33,7 @@ handle_http_method(Req, Opts) ->
     end.
 
 -spec handle_sid(atom(), tuple()) -> {integer(), map()}.
-handle_sid(UrlCase, Req) ->
+handle_sid(Url, Req) ->
     Sid = cowboy_req:header(<<"sid">>, Req, undefined),
     case auth_hub_helper:check_sid(Sid) of
         {Sid, Login, null, TsEnd} ->
@@ -42,29 +42,29 @@ handle_sid(UrlCase, Req) ->
                     {502, ?RESP_FAIL(<<"invalid db resp">>)};
                 RolesMap ->
                     true = ets:insert(sids_cache, {Sid, Login, RolesMap, TsEnd}),
-                    handle_body(UrlCase, RolesMap, Req)
+                    handle_body(Url, RolesMap, Req)
             end;
         {Sid, _Login, RolesMap, _TsEnd} ->
-            handle_body(UrlCase, RolesMap, Req);
+            handle_body(Url, RolesMap, Req);
         _Error ->
             ?LOG_ERROR("sid is invalid or legacy", []),
             {403, ?RESP_FAIL(<<"sid is invalid or legacy">>)}
     end.
 
--spec handle_body(atom(), map(), tuple()) -> {integer(), map()}.
-handle_body(get_users_all_info, RolesMap, _Req) ->
-    handle_auth(<<"get_users_all_info">>, RolesMap, #{});
-handle_body(UrlCase, RolesMap, Req) ->
+-spec handle_body(binary(), map(), tuple()) -> {integer(), map()}.
+handle_body(<<"/users/info">>, RolesMap, _Req) ->
+    handle_auth(<<"get_users_all_info">>, <<"/users/info">>, RolesMap, #{});
+handle_body(Url, RolesMap, Req) ->
     case cowboy_req:has_body(Req) of
         true ->
             {ok, Body, _Req} = cowboy_req:read_body(Req),
-            case {jsone:try_decode(Body), UrlCase} of
-                {{error, Reason}, _} ->
+            case jsone:try_decode(Body) of
+                {error, Reason} ->
                     ?LOG_ERROR("Decode error, ~p", [Reason]),
                     {400, ?RESP_FAIL(<<"invalid request format">>)};
-                {{ok, #{<<"method">> := Method} = BodyMap, _}, _} ->
-                    handle_auth(Method, RolesMap, BodyMap);
-                {{ok, OtherMap, _}, _} ->
+                {ok, #{<<"method">> := Method} = BodyMap, _} ->
+                    handle_auth(Method, Url, RolesMap, BodyMap);
+                {ok, OtherMap, _} ->
                     ?LOG_ERROR("Absent needed params ~p", [OtherMap]),
                     {422, ?RESP_FAIL(<<"absent needed params">>)}
             end;
@@ -73,10 +73,10 @@ handle_body(UrlCase, RolesMap, Req) ->
             {400, ?RESP_FAIL(<<"missing body">>)}
     end.
 
--spec handle_auth(binary(), map(), map()) -> {integer(), map()}.
-handle_auth(Method, RolesMap, BodyMap) ->
+-spec handle_auth(binary(), binary(), map(), map()) -> {integer(), map()}.
+handle_auth(Method, Url, RolesMap, BodyMap) ->
     Roles = maps:get(?SERVICE_SUBSYSTEM, RolesMap, []),
-    case maps:get(Method, ?SERVICE_ROLES, undefined) of
+    case maps:get({Method, Url}, ?API_PERMIT_ROLES, undefined) of
         undefined ->
             ?LOG_ERROR("Invalid method", []),
             {422, ?RESP_FAIL(<<"invalid method">>)};
@@ -86,12 +86,12 @@ handle_auth(Method, RolesMap, BodyMap) ->
                     ?LOG_ERROR("Absent roles ~p in ~p", [PermitRoles, Roles]),
                     {401, ?RESP_FAIL(<<"absent role">>)};
                 true ->
-                    handle_method(Method, BodyMap)
+                    handle_method(Method, Url, BodyMap)
             end
     end.
 
--spec handle_method(binary(), map()) -> {integer(), binary()}.
-handle_method(<<"create_users">>, #{<<"users">> := ListMap}) when is_list(ListMap) ->
+-spec handle_method(binary(), binary(), map()) -> {integer(), binary()}.
+handle_method(<<"create_users">>, <<"/users">>, #{<<"users">> := ListMap}) when is_list(ListMap) ->
     try poolboy:checkout(pg_pool, 1000) of
         full ->
             ?LOG_ERROR("No workers in pg_pool", []),
@@ -105,7 +105,7 @@ handle_method(<<"create_users">>, #{<<"users">> := ListMap}) when is_list(ListMa
             ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
             {429, ?RESP_FAIL(<<"too many requests">>)}
     end;
-handle_method(<<"delete_users">>, #{<<"logins">> := ListMap}) when is_list(ListMap) ->
+handle_method(<<"delete_users">>, <<"/users">>, #{<<"logins">> := ListMap}) when is_list(ListMap) ->
     try poolboy:checkout(pg_pool, 1000) of
         full ->
             ?LOG_ERROR("No workers in pg_pool", []),
@@ -119,7 +119,7 @@ handle_method(<<"delete_users">>, #{<<"logins">> := ListMap}) when is_list(ListM
             ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
             {429, ?RESP_FAIL(<<"too many requests">>)}
     end;
-handle_method(<<"get_users_all_info">>, _Map) ->
+handle_method(<<"get_users_all_info">>, <<"/users/info">>, _Map) ->
     case auth_hub_pg:select("get_users_all_info", []) of
         {error, Reason} ->
             ?LOG_ERROR("Invalid db response, ~p", [Reason]),
@@ -131,7 +131,8 @@ handle_method(<<"get_users_all_info">>, _Map) ->
             {200, ?RESP_SUCCESS(ListResp)}
     end;
 
-handle_method(Method, #{<<"changes">> := ListOperations}) when (Method =:= <<"add_roles">>) or (Method =:= <<"delete_roles">>) ->
+handle_method(Method, <<"/roles/change">>, #{<<"changes">> := ListOperations}) when
+    (Method =:= <<"add_roles">>) or (Method =:= <<"delete_roles">>) ->
     try poolboy:checkout(pg_pool, 1000) of
         full ->
             ?LOG_ERROR("No workers in pg_pool", []),
@@ -146,23 +147,29 @@ handle_method(Method, #{<<"changes">> := ListOperations}) when (Method =:= <<"ad
             {429, ?RESP_FAIL(<<"too many requests">>)}
     end;
 
-handle_method(<<"show_allow_roles">>, _Map) ->
+handle_method(<<"get_allow_roles">>, <<"/roles/allow/info">>, _Map) ->
     [{_, Pid}] = ets:lookup(auth_hub, auth_hub_server),
     Reply = gen_server:call(Pid, {show_allow_roles}),
     {200, jsone:encode(Reply)};
-handle_method(<<"add_allow_roles">>, Map) ->
+
+
+
+handle_method(<<"add_roles">>, <<"/roles/allow/change">>, Map) ->
     [{_, Pid}] = ets:lookup(auth_hub, auth_hub_server),
     #{<<"roles">> := ListRoles} = Map,
     Reply = gen_server:call(Pid, {add_allow_roles, ListRoles}),
     {200, jsone:encode(Reply)};
-handle_method(<<"delete_allow_roles">>, Map) ->
+handle_method(<<"delete_roles">>, <<"/roles/allow/change">>, Map) ->
     [{_, Pid}] = ets:lookup(auth_hub, auth_hub_server),
     #{<<"roles">> := ListRoles} = Map,
     Reply = gen_server:call(Pid, {delete_allow_roles, ListRoles}),
     {200, jsone:encode(Reply)};
-handle_method(_Method, _OtherBody) ->
-    ?LOG_ERROR("Incorrect body or method", []),
-    {422, ?RESP_FAIL(<<"invalid request format">>)}.
+
+
+
+handle_method(Method, Url, OtherBody) ->
+    ?LOG_ERROR("Absent needed params ~p, ~p, ~p", [Method, Url, OtherBody]),
+    {400, ?RESP_FAIL(<<"absent needed params">>)}.
 
 
 %% ========= change_roles =========

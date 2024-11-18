@@ -8,12 +8,12 @@
 
 
 -define(SERVICE_SUBSYSTEM, <<"authHub">>).
--define(SERVICE_ROLES, #{
-    <<"create_users">> =>        [<<"am">>, <<"cr">>],
-    <<"delete_users">> =>        [<<"am">>, <<"dl">>],
-    <<"get_users_all_info">> =>  [<<"am">>],
-    <<"add_roles">> =>           [<<"am">>],
-    <<"delete_roles">> =>        [<<"am">>]
+-define(API_PERMIT_ROLES, #{
+    {<<"create_users">>,       <<"/users">>} =>          [<<"am">>, <<"cr">>],
+    {<<"delete_users">>,       <<"/users">>} =>          [<<"am">>, <<"dl">>],
+    {<<"get_users_all_info">>, <<"/users/info">>} =>     [<<"am">>],
+    {<<"add_roles">>,          <<"/roles/change">>} =>   [<<"am">>],
+    {<<"delete_roles">>,       <<"/roles/change">>} =>   [<<"am">>]
 }).
 
 -define(RESP_SUCCESS_SID(Sid, TsStart, TsEnd), #{<<"success">> => #{<<"sid">> => Sid, <<"ts_start">> => TsStart, <<"ts_end">> => TsEnd}}).
