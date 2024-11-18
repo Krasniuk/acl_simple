@@ -15,17 +15,13 @@ init(Req, Opts) ->
 -spec handle_http_method(tuple(), list()) -> {integer(), map()}.
 handle_http_method(Req, Opts) ->
     case {cowboy_req:method(Req), Opts} of
-        {<<"POST">>, [<<"/users">> = Url]} ->
+        {<<"POST">>, [Url]} when (Url == <<"/users">>) or (Url == <<"/roles/change">>) ->
             {HttpCode, RespMap} = handle_sid(Url, Req),
             ?LOG_DEBUG("Post reply ~p", [HttpCode]),
             {HttpCode, RespMap};
-        {<<"GET">>, [<<"/users/info">> = Url]} ->
+        {<<"GET">>, [Url]} when (Url == <<"/users/info">>) or (Url == <<"/allow/subsystems/roles/info">>) ->
             {HttpCode, RespMap} = handle_sid(Url, Req),
             ?LOG_DEBUG("Get reply ~p", [HttpCode]),
-            {HttpCode, RespMap};
-        {<<"POST">>, [<<"/roles/change">> = Url]} ->
-            {HttpCode, RespMap} = handle_sid(Url, Req),
-            ?LOG_DEBUG("Post reply ~p", [HttpCode]),
             {HttpCode, RespMap};
         {Method, _} ->
             ?LOG_ERROR("Method ~p not allowed ~p~n", [Method, Req]),
@@ -53,7 +49,9 @@ handle_sid(Url, Req) ->
 
 -spec handle_body(binary(), map(), tuple()) -> {integer(), map()}.
 handle_body(<<"/users/info">>, RolesMap, _Req) ->
-    handle_auth(<<"get_users_all_info">>, <<"/users/info">>, RolesMap, #{});
+    handle_auth(<<>>, <<"/users/info">>, RolesMap, #{});
+handle_body(<<"/allow/subsystems/roles/info">> = Url, RolesMap, _Req) ->
+    handle_auth(<<>>, Url, RolesMap, #{});
 handle_body(Url, RolesMap, Req) ->
     case cowboy_req:has_body(Req) of
         true ->
@@ -119,7 +117,7 @@ handle_method(<<"delete_users">>, <<"/users">>, #{<<"logins">> := ListMap}) when
             ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
             {429, ?RESP_FAIL(<<"too many requests">>)}
     end;
-handle_method(<<"get_users_all_info">>, <<"/users/info">>, _Map) ->
+handle_method(<<>>, <<"/users/info">>, #{}) ->
     case auth_hub_pg:select("get_users_all_info", []) of
         {error, Reason} ->
             ?LOG_ERROR("Invalid db response, ~p", [Reason]),
@@ -147,10 +145,20 @@ handle_method(Method, <<"/roles/change">>, #{<<"changes">> := ListOperations}) w
             {429, ?RESP_FAIL(<<"too many requests">>)}
     end;
 
-handle_method(<<"get_allow_roles">>, <<"/roles/allow/info">>, _Map) ->
-    [{_, Pid}] = ets:lookup(auth_hub, auth_hub_server),
-    Reply = gen_server:call(Pid, {show_allow_roles}),
-    {200, jsone:encode(Reply)};
+handle_method(<<>>, <<"/allow/subsystems/roles/info">>, #{}) ->
+    try poolboy:checkout(pg_pool, 1000) of
+        full ->
+            ?LOG_ERROR("No workers in pg_pool", []),
+            {429, ?RESP_FAIL(<<"too many requests">>)};
+        PgPid ->
+            Resp = get_allow_roles(PgPid),
+            ok = poolboy:checkin(pg_pool, PgPid),
+            Resp
+    catch
+        exit:{timeout, Reason} ->
+            ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
+            {429, ?RESP_FAIL(<<"too many requests">>)}
+    end;
 
 
 
@@ -172,7 +180,49 @@ handle_method(Method, Url, OtherBody) ->
     {400, ?RESP_FAIL(<<"absent needed params">>)}.
 
 
-%% ========= change_roles =========
+%% ========= get_allow_roles ====== /roles/allow/info =========
+
+-spec get_allow_roles(pid()) -> list().
+get_allow_roles(PgPid) ->
+    case auth_hub_pg:select(PgPid, "get_allow_roles", []) of
+        {error, Reason} ->
+            ?LOG_ERROR("get_allow_roles db error ~p", [Reason]),
+            {502, ?RESP_FAIL(<<"invalid db response">>)};
+        {ok, _, DbValues} ->
+            MapAllRoles = parse_allow_roles(DbValues, #{}),
+            case auth_hub_pg:select(PgPid, "get_allow_subsystem", []) of
+                {error, Reason} ->
+                    ?LOG_ERROR("get_allow_roles db error ~p", [Reason]),
+                    {502, ?RESP_FAIL(<<"invalid db response">>)};
+                {ok, _, DbValues1} ->
+                    MapResp = parse_allow_subsystems(DbValues1, MapAllRoles),
+                    {200, ?RESP_SUCCESS(MapResp)}
+            end
+    end.
+
+-spec parse_allow_roles(DbResp :: list(), map()) -> map().
+parse_allow_roles([], Result) -> Result;
+parse_allow_roles([{SubSys, null, null} | T], Result) ->
+    Result1 = Result#{SubSys => []},
+    parse_allow_roles(T, Result1);
+parse_allow_roles([{SubSys, DbRole, Description} | T], Result) ->
+    Result1 = case maps:get(SubSys, Result, null) of
+                  null ->
+                      Result#{SubSys => [#{<<"role">> => DbRole, <<"description">> => Description}]};
+                  Roles ->
+                      Result#{SubSys := [#{<<"role">> => DbRole, <<"description">> => Description} | Roles]}
+              end,
+    parse_allow_roles(T, Result1).
+
+-spec parse_allow_subsystems(DbResp :: list(), map()) -> list().
+parse_allow_subsystems([], _MapAllRoles) -> [];
+parse_allow_subsystems([{SubSys, Description} | T], MapAllRoles) ->
+    #{SubSys := Roles} = MapAllRoles,
+    MapResp = #{<<"subsystem">> => SubSys, <<"roles">> => Roles, <<"description">> => Description},
+    [MapResp | parse_allow_subsystems(T, MapAllRoles)].
+
+
+%% ========= add_roles, delete_roles ====== /roles/change =========
 
 -spec handler_change_roles(binary(), list()) -> list().
 handler_change_roles(_Method, []) -> [];
@@ -283,7 +333,7 @@ generate_insert_sql(second, [Role | T], Login, Subsys, Sql) ->
     generate_insert_sql(second, T, Login, Subsys, Sql1).
 
 
-%% ========= get_all_users_info =========
+%% ========= get_all_users_info ====== /users/info =========
 
 -spec parse_users_info(DbResp :: list(), map()) -> map().
 parse_users_info([], Result) -> Result;
@@ -313,20 +363,21 @@ add_subsyses([{SubSys} | T], Result) ->
 construct_response([], _UsersMap) -> [];
 construct_response([Login | T], UsersMap) ->
     #{Login := SubSystems} = UsersMap,
-    SidList = ets:select(sids_cache, [{
-        {'$1', '$2', '_', '_'},
-        [{'=:=', '$2', Login}],
-        ['$1']
-    }]),
-    ActiveSid = case SidList of
-                    [] -> null;
-                    [Sid] -> Sid
-                end,
-    MapResp = #{<<"login">> => Login, <<"subsystem_roles">> => SubSystems, <<"active_sid">> => ActiveSid},
+  %  SidList = ets:select(sids_cache, [{
+  %      {'$1', '$2', '_', '_'},
+  %      [{'=:=', '$2', Login}],
+  %      ['$1']
+  %  }]),
+  %  ActiveSid = case SidList of
+  %                  [] -> null;
+  %                  [Sid] -> Sid
+  %              end,
+    MapResp = #{<<"login">> => Login, <<"subsystem_roles">> => SubSystems %, <<"active_sid">> => ActiveSid
+        },
     [MapResp | construct_response(T, UsersMap)].
 
 
-%% ========= create_users =========
+%% ========= create_users ====== /users =========
 
 -spec create_users(list(), pid()) -> list().
 create_users([], _PgPid) -> [];
@@ -370,7 +421,7 @@ valid_pass(Pass) when (byte_size(Pass) >= 8) and (byte_size(Pass) < 100) ->
 valid_pass(_Other) -> false.
 
 
-%% ========= delete_users =========
+%% ========= delete_users ====== /users =========
 
 -spec delete_users(list(), pid()) -> list().
 delete_users([], _WorkerPid) -> [];

@@ -6,7 +6,7 @@
 
 -export([start_link/1]). % Export for poolboy
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]). % Export for gen_server
--export([select/2, insert/2, insert/3, delete/2, delete/3, sql_req_not_prepared/2, sql_req_not_prepared/3, get_roles/1]).
+-export([select/2, select/3, insert/2, insert/3, delete/2, delete/3, sql_req_not_prepared/2, sql_req_not_prepared/3, get_roles/1]).
 
 % ====================================================
 % Clients functions
@@ -35,6 +35,10 @@ convert_roles_from_db([{SubSys, Role}|T], Result) ->
             Roles1 = Roles ++ [Role],
             convert_roles_from_db(T, Result#{SubSys := Roles1})
     end.
+
+-spec select(pid(), string(), list()) -> {ok, Colon::list(), Values::list()} | {error, Reason::term()|no_connect}.
+select(WorkerPid, Statement, Args) ->
+    gen_server:call(WorkerPid, {select, Statement, Args}).
 
 -spec select(list(), list()) -> {ok, PropListAtr :: list(), PropListResp :: list()} | {error, Reason :: tuple()|no_connect}.
 select(Statement, Args) ->
@@ -192,9 +196,11 @@ parse(Conn) ->
     {ok, _} = epgsql:parse(Conn, "delete_user", "SELECT * FROM delete_user($1)", [varchar]),
 
     {ok, _} = epgsql:parse(Conn, "create_user", "INSERT INTO users (login, passhash) VALUES ($1, $2)", [varchar, varchar]),
-    {ok, _} = epgsql:parse(Conn, "get_users_all_info", "SELECT u.login, r.subsystem, r.role FROM roles r right outer join users u on r.login = u.login", []),
+    {ok, _} = epgsql:parse(Conn, "get_users_all_info", "SELECT u.login, r.subsystem, r.role FROM roles r RIGHT OUTER JOIN users u ON r.login = u.login", []),
+    {ok, _} = epgsql:parse(Conn, "get_allow_roles", "SELECT s.subsystem, r.role, r.description FROM allow_roles r RIGHT OUTER JOIN allow_subsystems s ON r.subsystem = s.subsystem", []),
+    {ok, _} = epgsql:parse(Conn, "get_allow_subsystem", "SELECT subsystem, description FROM allow_subsystems", []),
 
-    ok.
+        ok.
 
 -spec sql_req_prepared(pid(), list(), list()) -> {error, term()} | {ok, Colon::list(), Val::list()} | {ok, integer()}.
 sql_req_prepared(Conn, Statement, Args) ->
