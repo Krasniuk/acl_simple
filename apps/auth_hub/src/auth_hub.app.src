@@ -7,8 +7,7 @@
             [kernel,
                 stdlib,
                 cowboy,
-                lager,
-                amqp_client
+                lager
             ]},
         {env, []},
         {modules, []},
