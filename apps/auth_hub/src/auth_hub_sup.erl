@@ -16,7 +16,5 @@ init([]) ->
         poolboy:child_spec(Name, PoolArgs, WorkerArgs)
                           end, Args),
     SupFlags = {one_for_one, 5, 100},
-    Server = {auth_hub_server, {auth_hub_server, start_link, []}, permanent, 1000, worker, []},
-    TimerCache = {auth_hub_timers, {auth_hub_timers, start_link, []}, permanent, 1000, worker, []},
-
-    {ok, {SupFlags, PoolSpecs ++ [TimerCache, Server]}}.
+    Timers = {auth_hub_timers, {auth_hub_timers, start_link, []}, permanent, 1000, worker, []},
+    {ok, {SupFlags, PoolSpecs ++ [Timers]}}.

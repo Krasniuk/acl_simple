@@ -41,12 +41,12 @@ handle_body(Body) ->
     case jsone:try_decode(Body) of
         {error, Reason} ->
             ?LOG_ERROR("Decode error, ~p", [Reason]),
-            {400, ?JSON_ERROR(<<"invalid request format">>)};
+            {400, ?RESP_FAIL(<<"invalid request format">>)};
         {ok, #{<<"login">> := Login, <<"pass">> := PassWord}, _} ->
             get_session(Login, PassWord);
         _OtherMap ->
             ?LOG_ERROR("Absent needed params", []),
-            {422, ?JSON_ERROR(<<"absent needed params">>)}
+            {422, ?RESP_FAIL(<<"absent needed params">>)}
     end.
 
 -spec get_session(binary(), binary()) -> {integer(), map()}.

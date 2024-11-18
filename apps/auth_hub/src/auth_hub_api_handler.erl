@@ -15,17 +15,17 @@ init(Req, Opts) ->
 -spec handle_http_method(tuple(), list()) -> {integer(), map()}.
 handle_http_method(Req, Opts) ->
     case {cowboy_req:method(Req), Opts} of
-        {<<"POST">>, []} ->
+        {<<"POST">>, [<<"/users">>]} ->
             {HttpCode, RespMap} = handle_sid(null, Req),
             ?LOG_DEBUG("Post reply ~p", [HttpCode]),
             {HttpCode, RespMap};
-        {<<"POST">>, [change_roles]} ->
-            {HttpCode, RespMap} = handle_sid(change_roles, Req),
-            ?LOG_DEBUG("Post reply ~p", [HttpCode]),
-            {HttpCode, RespMap};
-        {<<"GET">>, [get_users_all_info]} ->
+        {<<"GET">>, [<<"/users/info">>]} ->
             {HttpCode, RespMap} = handle_sid(get_users_all_info, Req),
             ?LOG_DEBUG("Get reply ~p", [HttpCode]),
+            {HttpCode, RespMap};
+        {<<"POST">>, [<<"/roles/change">>]} ->
+            {HttpCode, RespMap} = handle_sid(null, Req),
+            ?LOG_DEBUG("Post reply ~p", [HttpCode]),
             {HttpCode, RespMap};
         {Method, _} ->
             ?LOG_ERROR("Method ~p not allowed ~p~n", [Method, Req]),
@@ -61,17 +61,12 @@ handle_body(UrlCase, RolesMap, Req) ->
             case {jsone:try_decode(Body), UrlCase} of
                 {{error, Reason}, _} ->
                     ?LOG_ERROR("Decode error, ~p", [Reason]),
-                    {400, ?JSON_ERROR(<<"invalid request format">>)};
-
-                {{ok, BodyMap, _}, change_roles} ->
-                    handle_auth(<<"change_roles">>, RolesMap, BodyMap);
-
+                    {400, ?RESP_FAIL(<<"invalid request format">>)};
                 {{ok, #{<<"method">> := Method} = BodyMap, _}, _} ->
                     handle_auth(Method, RolesMap, BodyMap);
-
                 {{ok, OtherMap, _}, _} ->
                     ?LOG_ERROR("Absent needed params ~p", [OtherMap]),
-                    {422, ?JSON_ERROR(<<"absent needed params">>)}
+                    {422, ?RESP_FAIL(<<"absent needed params">>)}
             end;
         false ->
             ?LOG_ERROR("Missing body ~p~n", [Req]),
@@ -136,14 +131,13 @@ handle_method(<<"get_users_all_info">>, _Map) ->
             {200, ?RESP_SUCCESS(ListResp)}
     end;
 
-% --- roles ---
-handle_method(<<"change_roles">>, #{<<"operations">> := ListOperations}) ->
+handle_method(Method, #{<<"changes">> := ListOperations}) when (Method =:= <<"add_roles">>) or (Method =:= <<"delete_roles">>) ->
     try poolboy:checkout(pg_pool, 1000) of
         full ->
             ?LOG_ERROR("No workers in pg_pool", []),
             {429, ?RESP_FAIL(<<"too many requests">>)};
         WorkerPid ->
-            Reply = operations_change_roles(ListOperations),
+            Reply = handler_change_roles(Method, ListOperations),
             ok = poolboy:checkin(pg_pool, WorkerPid),
             {200, #{<<"results">> => Reply}}
     catch
@@ -152,7 +146,6 @@ handle_method(<<"change_roles">>, #{<<"operations">> := ListOperations}) ->
             {429, ?RESP_FAIL(<<"too many requests">>)}
     end;
 
-% --- allow_roles ---
 handle_method(<<"show_allow_roles">>, _Map) ->
     [{_, Pid}] = ets:lookup(auth_hub, auth_hub_server),
     Reply = gen_server:call(Pid, {show_allow_roles}),
@@ -169,69 +162,76 @@ handle_method(<<"delete_allow_roles">>, Map) ->
     {200, jsone:encode(Reply)};
 handle_method(_Method, _OtherBody) ->
     ?LOG_ERROR("Incorrect body or method", []),
-    {422, ?JSON_ERROR(<<"invalid request format">>)}.
-
+    {422, ?RESP_FAIL(<<"invalid request format">>)}.
 
 
 %% ========= change_roles =========
 
--spec operations_change_roles(list()) -> list().
-operations_change_roles([]) -> [];
-operations_change_roles([#{<<"method">> := Method, <<"login">> := Login, <<"subsystem">> := SubSys, <<"roles">> := Roles} = MapReq|T]) when
-        (Method == <<"delete_roles">>) or (Method == <<"add_roles">>) ->
-    case {validation_param(Login, SubSys, Roles), Method} of
-        {false, _} ->
-            ?LOG_ERROR("operations_change_roles invalid params value", []),
+-spec handler_change_roles(binary(), list()) -> list().
+handler_change_roles(_Method, []) -> [];
+handler_change_roles(<<"add_roles">>, [#{<<"login">> := Login, <<"subsystem">> := SubSys, <<"roles">> := Roles} = MapReq | T]) ->
+    case validation_param(Login, SubSys, Roles) of
+        false ->
+            ?LOG_ERROR("handler_change_roles invalid params value", []),
             MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"invalid params value">>},
-            [MapResp | operations_change_roles(T)];
-        {true, <<"delete_roles">>} ->
+            [MapResp | handler_change_roles(<<"add_roles">>, T)];
+        true ->
+            case generate_insert_sql(first, Roles, Login, SubSys, ?SQL_INSERT_ROLES) of
+                null ->
+                    MapResp = MapReq#{<<"success">> => true},
+                    [MapResp | handler_change_roles(<<"add_roles">>, T)];
+                Sql ->
+                    case auth_hub_pg:sql_req_not_prepared(Sql, []) of
+                        {error, {_, _, _, unique_violation, _, _} = Reason} ->
+                            ?LOG_ERROR("handler_change_roles user have one of this roles, ~p", [Reason]),
+                            MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"user have one of this roles">>},
+                            [MapResp | handler_change_roles(<<"add_roles">>, T)];
+                        {error, {_, _, _, foreign_key_violation, _, _} = Reason} ->
+                            ?LOG_ERROR("handler_change_roles invalid login, ~p", [Reason]),
+                            MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"invalid login">>},
+                            [MapResp | handler_change_roles(<<"add_roles">>, T)];
+                        {error, Reason} ->
+                            ?LOG_ERROR("handler_change_roles db error ~p", [Reason]),
+                            MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"invalid db resp">>},
+                            [MapResp | handler_change_roles(<<"add_roles">>, T)];
+                        {ok, _Count} ->
+                            MapResp = MapReq#{<<"success">> => true},
+                            [MapResp | handler_change_roles(<<"add_roles">>, T)]
+                    end
+            end
+    end;
+handler_change_roles(<<"delete_roles">>, [#{<<"login">> := Login, <<"subsystem">> := SubSys, <<"roles">> := Roles} = MapReq | T]) ->
+    case validation_param(Login, SubSys, Roles) of
+        false ->
+            ?LOG_ERROR("handler_change_roles invalid params value", []),
+            MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"invalid params value">>},
+            [MapResp | handler_change_roles(<<"delete_roles">>, T)];
+        true ->
             LoginStr = binary_to_list(Login),
             SubSysStr = binary_to_list(SubSys),
             case generate_delete_sql(first, Roles, ?SQL_DELETE_ROLES(LoginStr, SubSysStr)) of
                 null ->
                     MapResp = MapReq#{<<"success">> => true},
-                    [MapResp | operations_change_roles(T)];
+                    [MapResp | handler_change_roles(<<"delete_roles">>, T)];
                 Sql ->
                     case auth_hub_pg:sql_req_not_prepared(Sql, []) of
                         {error, Reason} ->
-                            ?LOG_ERROR("operations_change_roles db error ~p", [Reason]),
+                            ?LOG_ERROR("handler_change_roles db error ~p", [Reason]),
                             MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"invalid db resp">>},
-                            [MapResp | operations_change_roles(T)];
+                            [MapResp | handler_change_roles(<<"delete_roles">>, T)];
                         {ok, _Count} ->
                             MapResp = MapReq#{<<"success">> => true},
-                            [MapResp | operations_change_roles(T)]
-                    end
-            end;
-        {true, <<"add_roles">>} ->
-            case generate_insert_sql(first, Roles, Login, SubSys, ?SQL_INSERT_ROLES) of
-                null ->
-                    MapResp = MapReq#{<<"success">> => true},
-                    [MapResp | operations_change_roles(T)];
-                Sql ->
-                    case auth_hub_pg:sql_req_not_prepared(Sql, []) of
-                        {error, {_, _, _, unique_violation, _, _} = Reason} ->
-                            ?LOG_ERROR("operations_change_roles user have one of this roles, ~p", [Reason]),
-                            MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"user have one of this roles">>},
-                            [MapResp | operations_change_roles(T)];
-                        {error, {_, _, _, foreign_key_violation, _, _} = Reason} ->
-                            ?LOG_ERROR("operations_change_roles invalid login, ~p", [Reason]),
-                            MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"invalid login">>},
-                            [MapResp | operations_change_roles(T)];
-                        {error, Reason} ->
-                            ?LOG_ERROR("operations_change_roles db error ~p", [Reason]),
-                            MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"invalid db resp">>},
-                            [MapResp | operations_change_roles(T)];
-                        {ok, _Count} ->
-                            MapResp = MapReq#{<<"success">> => true},
-                            [MapResp | operations_change_roles(T)]
+                            [MapResp | handler_change_roles(<<"delete_roles">>, T)]
                     end
             end
     end;
-operations_change_roles([_OtherMap|T]) ->
-    operations_change_roles(T).
+handler_change_roles(Method, [MapReq | T]) ->
+    ?LOG_ERROR("handler_change_roles absent needed params, ~p", [MapReq]),
+    MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"absent needed params">>},
+    [MapResp | handler_change_roles(Method, T)].
 
 -spec validation_param(term(), term(), term()) -> boolean().
-validation_param(Login, SubSys, Roles) when is_binary(Login) and is_binary(SubSys) and is_list(Roles)->
+validation_param(Login, SubSys, Roles) when is_binary(Login) and is_binary(SubSys) and is_list(Roles) ->
     ValidSubSys = ets:member(subsys_cache, SubSys),
     ValidRoles = valid_roles(Roles),
     ValidLogin = valid_login(Login),
@@ -241,7 +241,7 @@ validation_param(_Login, _SubSys, _Roles) ->
 
 -spec valid_roles(list()) -> boolean().
 valid_roles([]) -> true;
-valid_roles([Role|T]) when is_binary(Role) ->
+valid_roles([Role | T]) when is_binary(Role) ->
     case {match, [{0, byte_size(Role)}]} =:= re:run(Role, "[a-z]{2}", []) of
         true ->
             valid_roles(T);
@@ -254,27 +254,26 @@ valid_roles(_) ->
 -spec generate_delete_sql(first | second, list(), string()) -> string() | null.
 generate_delete_sql(first, [], _Sql) -> null;
 generate_delete_sql(second, [], Sql) ->
-    ?LOG_DEBUG("Sql = ~p", [Sql ++ ")"]),
+    ?LOG_DEBUG("Delete roles sql ~p", [Sql ++ ")"]),
     Sql ++ ")";
 generate_delete_sql(first, [Role | T], Sql) ->
     Sql1 = Sql ++ "role='" ++ binary_to_list(Role) ++ "'",
-    ?LOG_DEBUG("Sql = ~p", [Sql1]),
     generate_delete_sql(second, T, Sql1);
 generate_delete_sql(second, [Role | T], Sql) ->
     Sql1 = Sql ++ " or role='" ++ binary_to_list(Role) ++ "'",
-    ?LOG_DEBUG("Sql = ~p", [Sql1]),
     generate_delete_sql(second, T, Sql1).
 
 -spec generate_insert_sql(first | second, list(), binary(), binary(), string()) -> string() | null.
 generate_insert_sql(first, [], _Login, _Subsys, _Sql) -> null;
-generate_insert_sql(second, [], _Login, _Subsys, Sql) -> Sql;
+generate_insert_sql(second, [], _Login, _Subsys, Sql) ->
+    ?LOG_DEBUG("Insert roles sql ~p", [Sql ++ ")"]),
+    Sql;
 generate_insert_sql(first, [Role | T], Login, Subsys, Sql) ->
     Sql1 = Sql ++ "('" ++ binary_to_list(Login) ++ "', '" ++ binary_to_list(Subsys) ++ "', '" ++ binary_to_list(Role) ++ "')",
     generate_insert_sql(second, T, Login, Subsys, Sql1);
 generate_insert_sql(second, [Role | T], Login, Subsys, Sql) ->
     Sql1 = Sql ++ ", ('" ++ binary_to_list(Login) ++ "', '" ++ binary_to_list(Subsys) ++ "', '" ++ binary_to_list(Role) ++ "')",
     generate_insert_sql(second, T, Login, Subsys, Sql1).
-
 
 
 %% ========= get_all_users_info =========
@@ -320,7 +319,6 @@ construct_response([Login | T], UsersMap) ->
     [MapResp | construct_response(T, UsersMap)].
 
 
-
 %% ========= create_users =========
 
 -spec create_users(list(), pid()) -> list().
@@ -363,7 +361,6 @@ valid_pass(Pass) when (byte_size(Pass) >= 8) and (byte_size(Pass) < 100) ->
     Len = byte_size(Pass),
     {match, [{0, Len}]} =:= re:run(Pass, "[a-zA-Z_\\d-#&$%]*", []);
 valid_pass(_Other) -> false.
-
 
 
 %% ========= delete_users =========

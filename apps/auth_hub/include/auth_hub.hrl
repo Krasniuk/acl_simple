@@ -12,16 +12,9 @@
     <<"create_users">> =>        [<<"am">>, <<"cr">>],
     <<"delete_users">> =>        [<<"am">>, <<"dl">>],
     <<"get_users_all_info">> =>  [<<"am">>],
-    <<"change_roles">> =>        [<<"am">>]
+    <<"add_roles">> =>           [<<"am">>],
+    <<"delete_roles">> =>        [<<"am">>]
 }).
-
--define(JSON_ERROR(Req),                  #{<<"fail">> => #{<<"info">> => Req}}).
--define(JSON_OK,                          #{<<"success">> => #{<<"info">> => <<"ok">>}}).
--define(JSON_SHOW_ALLOW_ROLES(ListRoles), #{<<"success">> => #{<<"roles">> => ListRoles}}).
--define(JSON_USERS(Users),                #{<<"success">> => #{<<"users">> => Users}}).
--define(JSON_CUSTOM_GET_ROLES_OK(Roles),  #{<<"success">> => #{<<"roles">> => Roles}}).
--define(JSON_ROLES_OF_USER(UserName, Roles), #{<<"success">> => #{<<"user">> => UserName, <<"roles">> => Roles}}).
--define(JSON_DEVELOPMENT,                    #{<<"fail">> => #{<<"info">> => <<"develop now">>}}).
 
 -define(RESP_SUCCESS_SID(Sid, TsStart, TsEnd), #{<<"success">> => #{<<"sid">> => Sid, <<"ts_start">> => TsStart, <<"ts_end">> => TsEnd}}).
 -define(RESP_SUCCESS_CHECK_SID(Bool), #{<<"success">> => #{<<"is_active_session">> => Bool}}).
@@ -36,3 +29,4 @@
 -define(SQL_INSERT_ROLES, "INSERT INTO roles (login, subsystem, role) values ").
 -define(SQL_INIT_SIDS, "SELECT sid, login, null, ts_end FROM sids").
 -define(SQL_INIT_SUBSYS, "SELECT subsystem FROM allow_subsystems").
+
