@@ -92,7 +92,7 @@ get roles
 
 create users
 
-    POST http://127.0.0.1:1913/api
+    POST http://127.0.0.1:1913/api/users
     Content-Type: application/json
     sid: 7a9bdcfea34c11ef801c18c04d540e8a
     {
@@ -117,7 +117,7 @@ create users
 
 delete users
 
-    POST http://127.0.0.1:1913/api
+    POST http://127.0.0.1:1913/api/users
     Content-Type: application/json
     sid: 7a9bdcfea34c11ef801c18c04d540e8a
     {

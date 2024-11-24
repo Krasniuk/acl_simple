@@ -234,6 +234,9 @@ delete_roles([SubSys | T], DelRolesMap, PgPid) ->
 
 -spec delete_roles_db(list(), binary(), binary()) -> list().
 delete_roles_db([], _, _) -> [];
+delete_roles_db([<<"am">> | T], <<"authHub">> = SubSys, PgPid) ->
+    Resp = #{<<"success">> => false, <<"reason">> => <<"root role">>, <<"subsystem">> => SubSys, <<"role">> => <<"am">>},
+    [Resp | delete_roles_db(T, SubSys, PgPid)];
 delete_roles_db([Role | T], SubSys, PgPid) ->
     case auth_hub_pg:select(PgPid, "delete_allow_role", [SubSys, Role]) of
         {error, Reason} ->
@@ -371,9 +374,12 @@ handler_change_roles(<<"remove_roles">>, [#{<<"login">> := Login, <<"subsystem">
         true ->
             LoginStr = binary_to_list(Login),
             SubSysStr = binary_to_list(SubSys),
-            case generate_delete_sql(first, Roles, ?SQL_DELETE_ROLES(LoginStr, SubSysStr)) of
+            case generate_delete_sql(first, Roles, ?SQL_DELETE_ROLES(LoginStr, SubSysStr), {Login, SubSys}) of
                 null ->
                     MapResp = MapReq#{<<"success">> => true},
+                    [MapResp | handler_change_roles(<<"remove_roles">>, T)];
+                admin_error ->
+                    MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"root role 'am'">>},
                     [MapResp | handler_change_roles(<<"remove_roles">>, T)];
                 Sql ->
                     case auth_hub_pg:sql_req_not_prepared(Sql, []) of
@@ -413,17 +419,19 @@ valid_roles([Role | T]) when is_binary(Role) ->
 valid_roles(_) ->
     false.
 
--spec generate_delete_sql(first | second, list(), string()) -> string() | null.
-generate_delete_sql(first, [], _Sql) -> null;
-generate_delete_sql(second, [], Sql) ->
+-spec generate_delete_sql(first | second, list(), string(), {binary(), binary()}) -> string() | null | admin_error.
+generate_delete_sql(first, [], _Sql, _AdminCase) -> null;
+generate_delete_sql(_FirstFlag, [<<"am">> | _T], _Sql, {<<"admin">>, <<"authHub">>}) ->
+    admin_error;
+generate_delete_sql(second, [], Sql, _AdminCase) ->
     ?LOG_DEBUG("Delete roles sql ~p", [Sql ++ ")"]),
     Sql ++ ")";
-generate_delete_sql(first, [Role | T], Sql) ->
+generate_delete_sql(first, [Role | T], Sql, AdminCase) ->
     Sql1 = Sql ++ "role='" ++ binary_to_list(Role) ++ "'",
-    generate_delete_sql(second, T, Sql1);
-generate_delete_sql(second, [Role | T], Sql) ->
+    generate_delete_sql(second, T, Sql1, AdminCase);
+generate_delete_sql(second, [Role | T], Sql, AdminCase) ->
     Sql1 = Sql ++ " or role='" ++ binary_to_list(Role) ++ "'",
-    generate_delete_sql(second, T, Sql1).
+    generate_delete_sql(second, T, Sql1, AdminCase).
 
 -spec generate_insert_sql(first | second, list(), binary(), binary(), string()) -> string() | null.
 generate_insert_sql(first, [], _Login, _Subsys, _Sql) -> null;
@@ -528,7 +536,9 @@ valid_pass(_Other) -> false.
 %% ========= delete_users ====== /users =========
 
 -spec delete_users(list(), pid()) -> list().
-delete_users([], _WorkerPid) -> [];
+delete_users([], _PgPid) -> [];
+delete_users([<<"admin">> | T], PgPid) ->
+    [?RESP_FAIL_USERS(<<"admin">>, <<"root user">>) | delete_users(T, PgPid)];
 delete_users([Login | T], PgPid) when is_binary(Login) ->
     case valid_login(Login) of
         false ->
