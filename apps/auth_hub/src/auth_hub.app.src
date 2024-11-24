@@ -1,6 +1,6 @@
 {application, auth_hub,
     [{description, "An OTP application"},
-        {vsn, "1.3.100"},
+        {vsn, "2.0.0"},
         {registered, []},
         {mod, {auth_hub_app, []}},
         {applications,
