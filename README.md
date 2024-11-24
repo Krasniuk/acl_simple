@@ -267,13 +267,13 @@ add roles
     ]
     }
 
-delete roles
+remove roles
 
     POST http://127.0.0.1:1913/api/roles/change
     Content-Type: application/json
     sid: 7a9bdcfea34c11ef801c18c04d540e8a
     {
-    "method": "delete_roles",
+    "method": "remove_roles",
     "changes": [
         {
             "login": "kv190901kma",
@@ -312,7 +312,32 @@ delete roles
     ]
     }
 
+create roles
 
+    POST http://127.0.0.1:1913/api/allow/roles/change
+    Content-Type: application/json
+    sid: 7a9bdcfea34c11ef801c18c04d540e8a
+    {
+    "method": "create_roles",
+    "roles": [
+        {
+            "role": "tq",
+            "subsystem": "authHub",
+            "description": "test role"
+        }
+    ]
+    }
+
+    - response 200 -
+    {
+    "results": [
+        {
+            "role": "tq",
+            "subsystem": "authHub",
+            "success": true
+        }
+    ]
+    }
 
 
 
