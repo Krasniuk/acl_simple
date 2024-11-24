@@ -9,16 +9,18 @@
 
 -define(SERVICE_SUBSYSTEM, <<"authHub">>).
 -define(API_PERMIT_ROLES, #{
-    {<<>>,      <<"/allow/subsystems/roles/info">>} => [],
-    {<<"create_roles">>, <<"/allow/roles/change">>} => [<<"am">>],
-    {<<"delete_roles">>, <<"/allow/roles/change">>} => [<<"am">>],
+    {<<>>,                <<"/allow/subsystems/roles/info">>} => [],
+    {<<"create_roles">>,           <<"/allow/roles/change">>} => [<<"am">>],
+    {<<"delete_roles">>,           <<"/allow/roles/change">>} => [<<"am">>],
+    {<<"create_subsystems">>, <<"/allow/subsystems/change">>} => [<<"am">>],
+    {<<"delete_subsystems">>, <<"/allow/subsystems/change">>} => [<<"am">>],
 
-    {<<"create_users">>,              <<"/users">>} => [<<"am">>, <<"cr">>],
-    {<<"delete_users">>,              <<"/users">>} => [<<"am">>, <<"dl">>],
-    {<<>>,                       <<"/users/info">>} => [<<"am">>, <<"cr">>, <<"dl">>, <<"ar">>, <<"dr">>],
+    {<<"create_users">>,        <<"/users">>} => [<<"am">>, <<"cr">>],
+    {<<"delete_users">>,        <<"/users">>} => [<<"am">>, <<"dl">>],
+    {<<>>,                 <<"/users/info">>} => [<<"am">>, <<"cr">>, <<"dl">>, <<"ar">>, <<"dr">>],
 
-    {<<"add_roles">>,          <<"/roles/change">>} => [<<"am">>, <<"ar">>],
-    {<<"remove_roles">>,       <<"/roles/change">>} => [<<"am">>, <<"dr">>]
+    {<<"add_roles">>,    <<"/roles/change">>} => [<<"am">>, <<"ar">>],
+    {<<"remove_roles">>, <<"/roles/change">>} => [<<"am">>, <<"dr">>]
 }).
 
 -define(RESP_SUCCESS_SID(Sid, TsStart, TsEnd), #{<<"success">> => #{<<"sid">> => Sid, <<"ts_start">> => TsStart, <<"ts_end">> => TsEnd}}).

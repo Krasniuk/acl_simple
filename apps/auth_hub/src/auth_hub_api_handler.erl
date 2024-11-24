@@ -128,9 +128,8 @@ handle_method(<<>>, <<"/users/info">>, #{}) ->
             ListResp = construct_response(Logins, UsersMap),
             {200, ?RESP_SUCCESS(ListResp)}
     end;
-
 handle_method(Method, <<"/roles/change">>, #{<<"changes">> := ListOperations}) when
-    (Method =:= <<"add_roles">>) or (Method =:= <<"remove_roles">>) ->
+    ((Method =:= <<"add_roles">>) or (Method =:= <<"remove_roles">>)) and is_list(ListOperations) ->
     try poolboy:checkout(pg_pool, 1000) of
         full ->
             ?LOG_ERROR("No workers in pg_pool", []),
@@ -144,7 +143,6 @@ handle_method(Method, <<"/roles/change">>, #{<<"changes">> := ListOperations}) w
             ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
             {429, ?RESP_FAIL(<<"too many requests">>)}
     end;
-
 handle_method(<<>>, <<"/allow/subsystems/roles/info">>, #{}) ->
     try poolboy:checkout(pg_pool, 1000) of
         full ->
@@ -159,8 +157,7 @@ handle_method(<<>>, <<"/allow/subsystems/roles/info">>, #{}) ->
             ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
             {429, ?RESP_FAIL(<<"too many requests">>)}
     end;
-
-handle_method(<<"create_roles">>, <<"/allow/roles/change">>, #{<<"roles">> := RolesList}) ->
+handle_method(<<"create_roles">>, <<"/allow/roles/change">>, #{<<"roles">> := RolesList}) when is_list(RolesList) ->
     try poolboy:checkout(pg_pool, 1000) of
         full ->
             ?LOG_ERROR("No workers in pg_pool", []),
@@ -174,8 +171,7 @@ handle_method(<<"create_roles">>, <<"/allow/roles/change">>, #{<<"roles">> := Ro
             ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
             {429, ?RESP_FAIL(<<"too many requests">>)}
     end;
-
-handle_method(<<"delete_roles">>, <<"/allow/roles/change">>, #{<<"subsys_roles">> := DelRolesMap}) ->
+handle_method(<<"delete_roles">>, <<"/allow/roles/change">>, #{<<"subsys_roles">> := DelRolesMap}) when is_map(DelRolesMap) ->
     ListSubSys = maps:keys(DelRolesMap),
     case valid_subsystems(ListSubSys) of
         true ->
@@ -196,24 +192,55 @@ handle_method(<<"delete_roles">>, <<"/allow/roles/change">>, #{<<"subsys_roles">
             ?LOG_ERROR("delete_roles invalid subsystems ~p", [ListSubSys]),
             {422, ?RESP_FAIL(<<"invalid subsystem">>)}
     end;
+handle_method(<<"create_subsystems">>, <<"/allow/subsystems/change">>, #{<<"subsystems">> := Subsystems}) when is_list(Subsystems) ->
+    try poolboy:checkout(pg_pool, 1000) of
+        full ->
+            ?LOG_ERROR("No workers in pg_pool", []),
+            {429, ?RESP_FAIL(<<"too many requests">>)};
+        PgPid ->
+            Resp = create_subsystems(Subsystems, PgPid),
+            ok = poolboy:checkin(pg_pool, PgPid),
+            {200, #{<<"results">> => Resp}}
+    catch
+        exit:{timeout, Reason} ->
+            ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
+            {429, ?RESP_FAIL(<<"too many requests">>)}
+    end;
 
 handle_method(Method, Url, OtherBody) ->
-    ?LOG_ERROR("Absent needed params ~p, ~p, ~p", [Method, Url, OtherBody]),
-    {422, ?RESP_FAIL(<<"absent needed params">>)}.
+    ?LOG_ERROR("Invalid request format ~p, ~p, ~p", [Method, Url, OtherBody]),
+    {422, ?RESP_FAIL(<<"invalid request format">>)}.
 
 
+%% ========= create_subsystems ====== /allow/roles/change =========
 
--spec valid_subsystems(list()) -> boolean().
-valid_subsystems([]) -> true;
-valid_subsystems([SubSys | T]) when is_binary(SubSys) ->
-    case ets:member(subsys_cache, SubSys) of
+-spec create_subsystems(list(), pid()) -> list().
+create_subsystems([], _) -> [];
+create_subsystems([#{<<"subsystem">> := SubSys, <<"description">> := Desc} | T], PgPid) ->
+    case validation(create_subsystems, {SubSys, Desc}) of
         true ->
-            valid_subsystems(T);
+            case auth_hub_pg:insert(PgPid, "insert_allow_subsystem", [SubSys, Desc]) of
+                {error, {_, _, _, unique_violation, _, _} = Reason} ->
+                    ?LOG_ERROR("create_subsystems user have one of this roles, ~p", [Reason]),
+                    Resp = #{<<"success">> => false, <<"reason">> => <<"role exists">>, <<"subsystem">> => SubSys},
+                    [Resp | create_subsystems(T, PgPid)];
+                {error, Reason} ->
+                    ?LOG_ERROR("create_subsystems db error ~p", [Reason]),
+                    Resp = #{<<"success">> => false, <<"reason">> => <<"invalid db response">>, <<"subsystem">> => SubSys},
+                    [Resp | create_subsystems(T, PgPid)];
+                {ok, 1} ->
+                    Resp = #{<<"success">> => true, <<"subsystem">> => SubSys},
+                    [Resp | create_subsystems(T, PgPid)]
+            end;
         false ->
-            false
+            ?LOG_ERROR("create_subsystems invalid params ~p", [{SubSys, Desc}]),
+            Resp = #{<<"success">> => false, <<"reason">> => <<"invalid params">>, <<"subsystem">> => SubSys},
+            [Resp | create_subsystems(T, PgPid)]
     end;
-valid_subsystems(_) ->
-    false.
+create_subsystems([MapReq | T], PgPid) ->
+    ?LOG_ERROR("create_subsystems absent needed params, ~p", [MapReq]),
+    MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"absent needed params">>},
+    [MapResp | create_subsystems(T, PgPid)].
 
 
 %% ========= delete_roles ====== /allow/roles/change =========
@@ -248,22 +275,34 @@ delete_roles_db([Role | T], SubSys, PgPid) ->
             [Resp | delete_roles_db(T, SubSys, PgPid)]
     end.
 
+-spec valid_subsystems(list()) -> boolean().
+valid_subsystems([]) -> true;
+valid_subsystems([SubSys | T]) when is_binary(SubSys) ->
+    case ets:member(subsys_cache, SubSys) of
+        true ->
+            valid_subsystems(T);
+        false ->
+            false
+    end;
+valid_subsystems(_) ->
+    false.
+
 
 %% ========= create_roles ====== /allow/roles/change =========
 
 -spec create_roles(list(), pid()) -> list().
 create_roles([], _) -> [];
 create_roles([#{<<"role">> := Role, <<"subsystem">> := SubSys, <<"description">> := Desc} | T], PgPid) ->
-    case validation(SubSys, Role, Desc) of
+    case validation(create_roles, {SubSys, Role, Desc}) of
         true ->
             case auth_hub_pg:insert(PgPid, "insert_allow_role", [SubSys, Role, Desc]) of
                 {error, {_, _, _, unique_violation, _, _} = Reason} ->
-                    ?LOG_ERROR("handler_change_roles user have one of this roles, ~p", [Reason]),
-                    Resp = #{<<"success">> => false, <<"reason">> => <<"role exists">>,
+                    ?LOG_ERROR("create_roles user have one of this roles, ~p", [Reason]),
+                    Resp = #{<<"success">> => false, <<"reason">> => <<"subsystem exists">>,
                         <<"role">> => Role, <<"subsystem">> => SubSys},
-                    [Resp | handler_change_roles(<<"add_roles">>, T)];
+                    [Resp | create_roles(T, PgPid)];
                 {error, Reason} ->
-                    ?LOG_ERROR("add_allow_roles db error ~p", [Reason]),
+                    ?LOG_ERROR("create_roles db error ~p", [Reason]),
                     Resp = #{<<"success">> => false, <<"reason">> => <<"invalid db response">>,
                         <<"role">> => Role, <<"subsystem">> => SubSys},
                     [Resp | create_roles(T, PgPid)];
@@ -272,19 +311,45 @@ create_roles([#{<<"role">> := Role, <<"subsystem">> := SubSys, <<"description">>
                     [Resp | create_roles(T, PgPid)]
             end;
         false ->
-            ?LOG_ERROR("add_allow_roles invalid params ~p", [{Role, SubSys, Desc}]),
+            ?LOG_ERROR("create_roles invalid params ~p", [{Role, SubSys, Desc}]),
             Resp = #{<<"success">> => false, <<"reason">> => <<"invalid params">>,
                 <<"role">> => Role, <<"subsystem">> => SubSys},
             [Resp | create_roles(T, PgPid)]
-    end.
+    end;
+create_roles([MapReq | T], PgPid) ->
+    ?LOG_ERROR("create_roles absent needed params ~p", [MapReq]),
+    MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"absent needed params">>},
+    [MapResp | create_roles(T, PgPid)].
 
--spec validation(term(), term(), term()) -> boolean().
-validation(SubSys, Role, Desc) when is_binary(SubSys) and is_binary(Role) and is_binary(Desc) ->
+-spec validation(atom(), tuple()) -> boolean().
+validation(change_roles, {Login, SubSys, Roles}) when is_binary(SubSys) and is_list(Roles) and is_binary(Login) ->
+    ValidSubSys = ets:member(subsys_cache, SubSys),
+    ValidRoles = valid_roles(Roles),
+    ValidLogin = valid_login(Login),
+    ValidSubSys and ValidLogin and ValidRoles;
+validation(create_subsystems, {SubSys, Desc}) when is_binary(SubSys) and is_binary(Desc) ->
+    VSubSys = {match, [{0, byte_size(SubSys)}]} =:= re:run(SubSys, "[a-zA-Z_\\d]{1,50}", []),
+    VDesc = {match, [{0, byte_size(Desc)}]} =:= re:run(Desc, "[a-zA-Z-:=+,.()\/@#{}'' \\d]{0,100}", []),
+    %?LOG_DEBUG("VSubSys = ~p, VDesc = ~p", [VSubSys, VDesc]),
+    VSubSys and VDesc;
+validation(create_roles, {SubSys, Role, Desc}) when is_binary(SubSys) and is_binary(Role) and is_binary(Desc) ->
     VSubSys = ets:member(subsys_cache, SubSys),
     VRole = {match, [{0, byte_size(Role)}]} =:= re:run(Role, "[a-z]{2}", []),
-    VDesc = {match, [{0, byte_size(Desc)}]} =:= re:run(Desc, "[a-zA-Z-:=+,.()\/@#{}'' //d]{0,100}", []),
+    VDesc = {match, [{0, byte_size(Desc)}]} =:= re:run(Desc, "[a-zA-Z-:=+,.()\/@#{}'' \\d]{0,100}", []),
     VSubSys and VRole and VDesc;
-validation(_, _, _) ->
+validation(_, _) ->
+    false.
+
+-spec valid_roles(list()) -> boolean().
+valid_roles([]) -> true;
+valid_roles([Role | T]) when is_binary(Role) ->
+    case {match, [{0, byte_size(Role)}]} =:= re:run(Role, "[a-z]{2}", []) of
+        true ->
+            valid_roles(T);
+        false ->
+            false
+    end;
+valid_roles(_) ->
     false.
 
 
@@ -335,7 +400,7 @@ parse_allow_subsystems([{SubSys, Description} | T], MapAllRoles) ->
 -spec handler_change_roles(binary(), list()) -> list().
 handler_change_roles(_Method, []) -> [];
 handler_change_roles(<<"add_roles">>, [#{<<"login">> := Login, <<"subsystem">> := SubSys, <<"roles">> := Roles} = MapReq | T]) ->
-    case validation_param(Login, SubSys, Roles) of
+    case validation(change_roles, {Login, SubSys, Roles})  of
         false ->
             ?LOG_ERROR("handler_change_roles invalid params value", []),
             MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"invalid params value">>},
@@ -366,7 +431,7 @@ handler_change_roles(<<"add_roles">>, [#{<<"login">> := Login, <<"subsystem">> :
             end
     end;
 handler_change_roles(<<"remove_roles">>, [#{<<"login">> := Login, <<"subsystem">> := SubSys, <<"roles">> := Roles} = MapReq | T]) ->
-    case validation_param(Login, SubSys, Roles) of
+    case validation(change_roles, {Login, SubSys, Roles}) of
         false ->
             ?LOG_ERROR("handler_change_roles invalid params value", []),
             MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"invalid params value">>},
@@ -397,27 +462,6 @@ handler_change_roles(Method, [MapReq | T]) ->
     ?LOG_ERROR("handler_change_roles absent needed params, ~p", [MapReq]),
     MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"absent needed params">>},
     [MapResp | handler_change_roles(Method, T)].
-
--spec validation_param(term(), term(), term()) -> boolean().
-validation_param(Login, SubSys, Roles) when is_binary(Login) and is_binary(SubSys) and is_list(Roles) ->
-    ValidSubSys = ets:member(subsys_cache, SubSys),
-    ValidRoles = valid_roles(Roles),
-    ValidLogin = valid_login(Login),
-    ValidSubSys and ValidLogin and ValidRoles;
-validation_param(_Login, _SubSys, _Roles) ->
-    false.
-
--spec valid_roles(list()) -> boolean().
-valid_roles([]) -> true;
-valid_roles([Role | T]) when is_binary(Role) ->
-    case {match, [{0, byte_size(Role)}]} =:= re:run(Role, "[a-z]{2}", []) of
-        true ->
-            valid_roles(T);
-        false ->
-            false
-    end;
-valid_roles(_) ->
-    false.
 
 -spec generate_delete_sql(first | second, list(), string(), {binary(), binary()}) -> string() | null | admin_error.
 generate_delete_sql(first, [], _Sql, _AdminCase) -> null;
