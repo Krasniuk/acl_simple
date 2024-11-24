@@ -1,14 +1,11 @@
 -module(customer_ok_SUITE).
 -author('Mykhailo Krasniuk <mykhailo.krasniuk@privatbank.ua>').
 
--include_lit("common_test/include/ct.hrl").
--include("include/sys_config.hrl").
+-include("../include/test.hrl").
 
 -export([all/0, init_per_suite/1, end_per_suite/1, groups/0]).
--export([get_roles/1]).
 
--define(URL_CUSTOMER, "http://127.0.0.1:1913/customer").
--define(HEADERS, [{"Content-type", "application/json;charset=UTF-8"}]).
+-export([get_roles/1]).
 
 
 %% ==================================
@@ -16,15 +13,12 @@
 %% ==================================
 
 init_per_suite(Config) ->
-    %  ok = application:set_env(?START_ENV),
-    %   ok = acl_simple:start(),
     Config.
 
 groups() ->
     [].
 
 end_per_suite(Config) ->
-    %ok = acl_simple:stop(),
     Config.
 
 

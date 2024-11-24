@@ -1,15 +1,11 @@
 -module(admin_fail_SUITE).
 -author('Mykhailo Krasniuk <mykhailo.krasniuk@privatbank.ua>').
 
--include_lit("common_test/include/ct.hrl").
--include("include/sys_config.hrl").
+-include("../include/test.hrl").
 
 -export([all/0, init_per_suite/1, end_per_suite/1, groups/0]).
 
 -export([missing_body/1, bad_http_method/1, parse_body_fail/1, add_allow_roles/1]).
-
--define(URL_ADMIN, "http://127.0.0.1:1913/admin").
--define(HEADERS, [{"Content-type", "application/json;charset=UTF-8"}]).
 
 
 %% ==================================
@@ -18,14 +14,14 @@
 
 init_per_suite(Config) ->
   %  ok = application:set_env(?START_ENV),
- %   ok = acl_simple:start(),
+ %   ok = auth_hub:start(),
     Config.
 
 groups() ->
     [].
 
 end_per_suite(Config) ->
-    ok = acl_simple:stop(),
+    ok = auth_hub:stop(),
     Config.
 
 

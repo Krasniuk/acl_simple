@@ -1,4 +1,4 @@
--module(acl_simple_sup).
+-module(auth_hub_sup).
 -author('Mykhailo Krasniuk <miha.190901@gmail.com>').
 -behaviour(supervisor).
 
@@ -16,7 +16,5 @@ init([]) ->
         poolboy:child_spec(Name, PoolArgs, WorkerArgs)
                           end, Args),
     SupFlags = {one_for_one, 5, 100},
-    Server = {acl_simple_server, {acl_simple_server, start_link, []}, permanent, 1000, worker, []},
-    TimerCache = {acl_simple_timer_cache, {acl_simple_timer_cache, start_link, []}, permanent, 1000, worker, []},
-
-    {ok, {SupFlags, PoolSpecs ++ [TimerCache, Server]}}.
+    Timers = {auth_hub_timers, {auth_hub_timers, start_link, []}, permanent, 1000, worker, []},
+    {ok, {SupFlags, PoolSpecs ++ [Timers]}}.

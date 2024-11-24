@@ -1,14 +1,14 @@
--module(acl_simple). %% Module for common tests
+-module(auth_hub). %% Module for common tests
 -author('Mykhailo Krasniuk <miha.190901@gmail.com>').
 
 -export([start/0, stop/0]).
 
 
 start() ->
-    start(acl_simple).
+    start(auth_hub).
 
 stop() ->
-    application:stop(acl_simple).
+    application:stop(auth_hub).
 
 
 %% =====================================
