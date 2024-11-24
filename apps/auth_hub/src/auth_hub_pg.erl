@@ -199,8 +199,9 @@ parse(Conn) ->
     {ok, _} = epgsql:parse(Conn, "get_users_all_info", "SELECT u.login, r.subsystem, r.role FROM roles r RIGHT OUTER JOIN users u ON r.login = u.login", []),
     {ok, _} = epgsql:parse(Conn, "get_allow_roles", "SELECT s.subsystem, r.role, r.description FROM allow_roles r RIGHT OUTER JOIN allow_subsystems s ON r.subsystem = s.subsystem", []),
     {ok, _} = epgsql:parse(Conn, "get_allow_subsystem", "SELECT subsystem, description FROM allow_subsystems", []),
+    {ok, _} = epgsql:parse(Conn, "insert_allow_roles", "insert into allow_roles (subsystem, role, description) values ($1, $2, $3)", [varchar, varchar, varchar]),
 
-        ok.
+    ok.
 
 -spec sql_req_prepared(pid(), list(), list()) -> {error, term()} | {ok, Colon::list(), Val::list()} | {ok, integer()}.
 sql_req_prepared(Conn, Statement, Args) ->

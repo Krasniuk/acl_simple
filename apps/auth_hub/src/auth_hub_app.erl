@@ -25,6 +25,7 @@ start(normal, _StartArgs) ->
             {"/api/users",                        auth_hub_api_handler, [<<"/users">>]},
             {"/api/roles/change",                 auth_hub_api_handler, [<<"/roles/change">>]},
             {"/api/allow/subsystems/roles/info",  auth_hub_api_handler, [<<"/allow/subsystems/roles/info">>]},
+            {"/api/allow/roles/change",           auth_hub_api_handler, [<<"/allow/roles/change">>]},
 
             {"/session/open",         auth_hub_sid_handler, [open_session]},
             {"/session/check",        auth_hub_sid_handler, [check_sid]},
