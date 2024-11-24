@@ -339,6 +339,44 @@ create roles
     ]
     }
 
+delete allow roles
+
+    POST http://127.0.0.1:1913/api/allow/roles/change
+    Content-Type: application/json
+    sid: 7a9bdcfea34c11ef801c18c04d540e8a
+    {
+    "method": "delete_roles",
+    "subsys_roles": {
+        "authHub": ["cl", "dl"],
+        "mainBroker": ["rk", "kr"]
+    }
+    }
+
+    - response 200 -
+    {
+    "results": [
+        {
+            "role": "cl",
+            "subsystem": "authHub",
+            "success": true
+        },
+        {
+            "role": "dl",
+            "subsystem": "authHub",
+            "success": true
+        },
+        {
+            "role": "rk",
+            "subsystem": "mainBroker",
+            "success": true
+        },
+        {
+            "role": "kr",
+            "subsystem": "mainBroker",
+            "success": true
+        }
+    ]
+    }
 
 
 PgSql Create scripts

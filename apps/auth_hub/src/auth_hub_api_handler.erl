@@ -15,13 +15,13 @@ init(Req, Opts) ->
 -spec handle_http_method(tuple(), list()) -> {integer(), map()}.
 handle_http_method(Req, Opts) ->
     case {cowboy_req:method(Req), Opts} of
-        {<<"POST">>, [Url]} when (Url == <<"/users">>) or (Url == <<"/roles/change">>) ->
-            {HttpCode, RespMap} = handle_sid(Url, Req),
-            ?LOG_DEBUG("Post reply ~p", [HttpCode]),
-            {HttpCode, RespMap};
         {<<"GET">>, [Url]} when (Url == <<"/users/info">>) or (Url == <<"/allow/subsystems/roles/info">>) ->
             {HttpCode, RespMap} = handle_sid(Url, Req),
             ?LOG_DEBUG("Get reply ~p", [HttpCode]),
+            {HttpCode, RespMap};
+        {<<"POST">>, [Url]} ->
+            {HttpCode, RespMap} = handle_sid(Url, Req),
+            ?LOG_DEBUG("Post reply ~p", [HttpCode]),
             {HttpCode, RespMap};
         {Method, _} ->
             ?LOG_ERROR("Method ~p not allowed ~p~n", [Method, Req]),
@@ -130,7 +130,7 @@ handle_method(<<>>, <<"/users/info">>, #{}) ->
     end;
 
 handle_method(Method, <<"/roles/change">>, #{<<"changes">> := ListOperations}) when
-    (Method =:= <<"add_roles">>) or (Method =:= <<"delete_roles">>) ->
+    (Method =:= <<"add_roles">>) or (Method =:= <<"remove_roles">>) ->
     try poolboy:checkout(pg_pool, 1000) of
         full ->
             ?LOG_ERROR("No workers in pg_pool", []),
@@ -160,24 +160,129 @@ handle_method(<<>>, <<"/allow/subsystems/roles/info">>, #{}) ->
             {429, ?RESP_FAIL(<<"too many requests">>)}
     end;
 
+handle_method(<<"create_roles">>, <<"/allow/roles/change">>, #{<<"roles">> := RolesList}) ->
+    try poolboy:checkout(pg_pool, 1000) of
+        full ->
+            ?LOG_ERROR("No workers in pg_pool", []),
+            {429, ?RESP_FAIL(<<"too many requests">>)};
+        PgPid ->
+            Resp = create_roles(RolesList, PgPid),
+            ok = poolboy:checkin(pg_pool, PgPid),
+            {200, #{<<"results">> => Resp}}
+    catch
+        exit:{timeout, Reason} ->
+            ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
+            {429, ?RESP_FAIL(<<"too many requests">>)}
+    end;
 
-
-handle_method(<<"add_roles">>, <<"/roles/allow/change">>, Map) ->
-    [{_, Pid}] = ets:lookup(auth_hub, auth_hub_server),
-    #{<<"roles">> := ListRoles} = Map,
-    Reply = gen_server:call(Pid, {add_allow_roles, ListRoles}),
-    {200, jsone:encode(Reply)};
-handle_method(<<"delete_roles">>, <<"/roles/allow/change">>, Map) ->
-    [{_, Pid}] = ets:lookup(auth_hub, auth_hub_server),
-    #{<<"roles">> := ListRoles} = Map,
-    Reply = gen_server:call(Pid, {delete_allow_roles, ListRoles}),
-    {200, jsone:encode(Reply)};
-
-
+handle_method(<<"delete_roles">>, <<"/allow/roles/change">>, #{<<"subsys_roles">> := DelRolesMap}) ->
+    ListSubSys = maps:keys(DelRolesMap),
+    case valid_subsystems(ListSubSys) of
+        true ->
+            try poolboy:checkout(pg_pool, 1000) of
+                full ->
+                    ?LOG_ERROR("No workers in pg_pool", []),
+                    {429, ?RESP_FAIL(<<"too many requests">>)};
+                PgPid ->
+                    Resp = delete_roles(ListSubSys, DelRolesMap, PgPid),
+                    ok = poolboy:checkin(pg_pool, PgPid),
+                    {200, #{<<"results">> => Resp}}
+            catch
+                exit:{timeout, Reason} ->
+                    ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
+                    {429, ?RESP_FAIL(<<"too many requests">>)}
+            end;
+        false ->
+            ?LOG_ERROR("delete_roles invalid subsystems ~p", [ListSubSys]),
+            {422, ?RESP_FAIL(<<"invalid subsystem">>)}
+    end;
 
 handle_method(Method, Url, OtherBody) ->
     ?LOG_ERROR("Absent needed params ~p, ~p, ~p", [Method, Url, OtherBody]),
-    {400, ?RESP_FAIL(<<"absent needed params">>)}.
+    {422, ?RESP_FAIL(<<"absent needed params">>)}.
+
+
+
+-spec valid_subsystems(list()) -> boolean().
+valid_subsystems([]) -> true;
+valid_subsystems([SubSys | T]) when is_binary(SubSys) ->
+    case ets:member(subsys_cache, SubSys) of
+        true ->
+            valid_subsystems(T);
+        false ->
+            false
+    end;
+valid_subsystems(_) ->
+    false.
+
+
+%% ========= delete_roles ====== /allow/roles/change =========
+
+-spec delete_roles(list(), binary(), binary()) -> list().
+delete_roles([], _DelRolesMap, _PgPid) -> [];
+delete_roles([SubSys | T], DelRolesMap, PgPid) ->
+    #{SubSys := ListRoles} = DelRolesMap,
+    case valid_roles(ListRoles) of
+        false ->
+            ?LOG_ERROR("delete_roles invalid roles ~p, ~p", [SubSys, ListRoles]),
+            Resp = #{<<"reason">> => <<"invalid roles">>, <<"success">> => false, <<"subsystem">> => SubSys, <<"roles">> => ListRoles},
+            [Resp | delete_roles(T, DelRolesMap, PgPid)];
+        true ->
+            ListResp = delete_roles_db(ListRoles, SubSys, PgPid),
+            ListResp ++ delete_roles(T, DelRolesMap, PgPid)
+    end.
+
+-spec delete_roles_db(list(), binary(), binary()) -> list().
+delete_roles_db([], _, _) -> [];
+delete_roles_db([Role | T], SubSys, PgPid) ->
+    case auth_hub_pg:select(PgPid, "delete_allow_role", [SubSys, Role]) of
+        {error, Reason} ->
+            ?LOG_ERROR("delete_roles_db db error ~p", [Reason]),
+            Resp = #{<<"success">> => false, <<"reason">> => <<"invalid db response">>, <<"subsystem">> => SubSys, <<"role">> => Role},
+            [Resp | delete_roles_db(T, SubSys, PgPid)];
+        {ok, _, [{<<"ok">>}]} ->
+            Resp = #{<<"success">> => true, <<"subsystem">> => SubSys, <<"role">> => Role},
+            [Resp | delete_roles_db(T, SubSys, PgPid)]
+    end.
+
+
+%% ========= create_roles ====== /allow/roles/change =========
+
+-spec create_roles(list(), pid()) -> list().
+create_roles([], _) -> [];
+create_roles([#{<<"role">> := Role, <<"subsystem">> := SubSys, <<"description">> := Desc} | T], PgPid) ->
+    case validation(SubSys, Role, Desc) of
+        true ->
+            case auth_hub_pg:insert(PgPid, "insert_allow_role", [SubSys, Role, Desc]) of
+                {error, {_, _, _, unique_violation, _, _} = Reason} ->
+                    ?LOG_ERROR("handler_change_roles user have one of this roles, ~p", [Reason]),
+                    Resp = #{<<"success">> => false, <<"reason">> => <<"role exists">>,
+                        <<"role">> => Role, <<"subsystem">> => SubSys},
+                    [Resp | handler_change_roles(<<"add_roles">>, T)];
+                {error, Reason} ->
+                    ?LOG_ERROR("add_allow_roles db error ~p", [Reason]),
+                    Resp = #{<<"success">> => false, <<"reason">> => <<"invalid db response">>,
+                        <<"role">> => Role, <<"subsystem">> => SubSys},
+                    [Resp | create_roles(T, PgPid)];
+                {ok, 1} ->
+                    Resp = #{<<"success">> => true, <<"role">> => Role, <<"subsystem">> => SubSys},
+                    [Resp | create_roles(T, PgPid)]
+            end;
+        false ->
+            ?LOG_ERROR("add_allow_roles invalid params ~p", [{Role, SubSys, Desc}]),
+            Resp = #{<<"success">> => false, <<"reason">> => <<"invalid params">>,
+                <<"role">> => Role, <<"subsystem">> => SubSys},
+            [Resp | create_roles(T, PgPid)]
+    end.
+
+-spec validation(term(), term(), term()) -> boolean().
+validation(SubSys, Role, Desc) when is_binary(SubSys) and is_binary(Role) and is_binary(Desc) ->
+    VSubSys = ets:member(subsys_cache, SubSys),
+    VRole = {match, [{0, byte_size(Role)}]} =:= re:run(Role, "[a-z]{2}", []),
+    VDesc = {match, [{0, byte_size(Desc)}]} =:= re:run(Desc, "[a-zA-Z-:=+,.()\/@#{}'' //d]{0,100}", []),
+    VSubSys and VRole and VDesc;
+validation(_, _, _) ->
+    false.
 
 
 %% ========= get_allow_roles ====== /roles/allow/info =========
@@ -222,7 +327,7 @@ parse_allow_subsystems([{SubSys, Description} | T], MapAllRoles) ->
     [MapResp | parse_allow_subsystems(T, MapAllRoles)].
 
 
-%% ========= add_roles, delete_roles ====== /roles/change =========
+%% ========= add_roles, remove_roles ====== /roles/change =========
 
 -spec handler_change_roles(binary(), list()) -> list().
 handler_change_roles(_Method, []) -> [];
@@ -257,28 +362,28 @@ handler_change_roles(<<"add_roles">>, [#{<<"login">> := Login, <<"subsystem">> :
                     end
             end
     end;
-handler_change_roles(<<"delete_roles">>, [#{<<"login">> := Login, <<"subsystem">> := SubSys, <<"roles">> := Roles} = MapReq | T]) ->
+handler_change_roles(<<"remove_roles">>, [#{<<"login">> := Login, <<"subsystem">> := SubSys, <<"roles">> := Roles} = MapReq | T]) ->
     case validation_param(Login, SubSys, Roles) of
         false ->
             ?LOG_ERROR("handler_change_roles invalid params value", []),
             MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"invalid params value">>},
-            [MapResp | handler_change_roles(<<"delete_roles">>, T)];
+            [MapResp | handler_change_roles(<<"remove_roles">>, T)];
         true ->
             LoginStr = binary_to_list(Login),
             SubSysStr = binary_to_list(SubSys),
             case generate_delete_sql(first, Roles, ?SQL_DELETE_ROLES(LoginStr, SubSysStr)) of
                 null ->
                     MapResp = MapReq#{<<"success">> => true},
-                    [MapResp | handler_change_roles(<<"delete_roles">>, T)];
+                    [MapResp | handler_change_roles(<<"remove_roles">>, T)];
                 Sql ->
                     case auth_hub_pg:sql_req_not_prepared(Sql, []) of
                         {error, Reason} ->
                             ?LOG_ERROR("handler_change_roles db error ~p", [Reason]),
                             MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"invalid db resp">>},
-                            [MapResp | handler_change_roles(<<"delete_roles">>, T)];
+                            [MapResp | handler_change_roles(<<"remove_roles">>, T)];
                         {ok, _Count} ->
                             MapResp = MapReq#{<<"success">> => true},
-                            [MapResp | handler_change_roles(<<"delete_roles">>, T)]
+                            [MapResp | handler_change_roles(<<"remove_roles">>, T)]
                     end
             end
     end;

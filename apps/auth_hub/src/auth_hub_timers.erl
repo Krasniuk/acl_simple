@@ -33,7 +33,7 @@ init([]) ->
 handle_call(_Data, _From, State) -> {reply, unknown_req, State}.
 handle_cast(_Data, State) -> {noreply, State}.
 
--spec handle_info(atom(), map()) -> {atom(), mao()}.
+-spec handle_info(atom(), map()) -> {atom(), map()}.
 handle_info(initialization, #{initialization_t := OldTimer, worker_pid := WorkerPid} = State) ->
     _ = erlang:cancel_timer(OldTimer),
     NewTimer = try poolboy:checkout(pg_pool, true, 1000) of
