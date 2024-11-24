@@ -363,17 +363,16 @@ add_subsyses([{SubSys} | T], Result) ->
 construct_response([], _UsersMap) -> [];
 construct_response([Login | T], UsersMap) ->
     #{Login := SubSystems} = UsersMap,
-  %  SidList = ets:select(sids_cache, [{
-  %      {'$1', '$2', '_', '_'},
-  %      [{'=:=', '$2', Login}],
-  %      ['$1']
-  %  }]),
-  %  ActiveSid = case SidList of
-  %                  [] -> null;
-  %                  [Sid] -> Sid
-  %              end,
-    MapResp = #{<<"login">> => Login, <<"subsystem_roles">> => SubSystems %, <<"active_sid">> => ActiveSid
-        },
+    SidList = ets:select(sids_cache, [{
+        {'$1', '$2', '_', '_'},
+        [{'=:=', '$2', Login}],
+        ['$1']
+    }]),
+    ActiveSid = case SidList of
+                    [] -> false;
+                    [_Sid] -> true
+                end,
+    MapResp = #{<<"login">> => Login, <<"subsystem_roles">> => SubSystems, <<"has_activ_sid">> => ActiveSid},
     [MapResp | construct_response(T, UsersMap)].
 
 
