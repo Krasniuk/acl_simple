@@ -3,8 +3,8 @@ auth_hub
 
 Build
 -----
----
-- Start service
+
+Start service
 
 
     $ make rel
@@ -14,19 +14,19 @@ Build
 
     $ ./run_main.sh
 
-- Start (Common tests + EUnit tests)
+Start (Common tests + EUnit tests)
 
 
     $ rebar3 ct --spec apps/auth_hub/tests/test.spec
 
-- Start WRK
+Start WRK
 
 
     $ wrk -t2 -c3 -d1m -R5700 -s apps/auth_hub/wrk/show_all_users.lua http://127.0.0.1:1913
     
 API
 ----
----
+
 open session
 
     POST http://127.0.0.1:1913/session/open
@@ -318,7 +318,6 @@ delete roles
 
 PgSql Create scripts
 ----
----
 Tables
 ---
 allow_roles
