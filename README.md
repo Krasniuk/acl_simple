@@ -3,159 +3,413 @@ auth_hub
 
 Build
 -----
+
+Start service
+
+
     $ make rel
     $ ./_build/prod/rel/auth_hub/bin/auth_hub console
-    
-or
+
+    or
 
     $ ./run_main.sh
-    $ ./run_cluster1.sh
 
-Common tests + EUnit tests
-----
+Start (Common tests + EUnit tests)
+
+
     $ rebar3 ct --spec apps/auth_hub/tests/test.spec
 
-WRK
-----
+Start WRK
+
+
     $ wrk -t2 -c3 -d1m -R5700 -s apps/auth_hub/wrk/show_all_users.lua http://127.0.0.1:1913
     
-Data developer
----- 
-    Transmission base: http, POST.
-    Transmission format: json.
-
-    Roles: "read", "write", "exec".
-
-    Cache saves in ets. Table 'auth_hub' in key 'server_cache'. 
-
-    login: admin
-    pass: 12345678
-
 API
------
-    auth_hub_server:
-        State = #{<<"User">> => [<<"Role">>, ..], ..},
-    
-        handle_call:                                                                Have cache     Benchmark(wrk2)   Delay(wrk2)
-            user_add({user_add, <<"NewUser">>}),                          (127 ms) | (106 ms)             (26 r/s) | (437 ms)
-            user_delete({user_delete, <<"User">>}),                       (271 ms) | (297 ms)                      |
-            show_all_users({show_all_users}),                             (114 ms) | (2 ms)            (15200 r/s) | (19 ms)
-        
-            roles_add({roles_add, <<"User">>, [<<"Role">>, ...]}),        (459 ms) | (246 ms)             (95 r/s) | (437 ms)
-            roles_delete({roles_delete, <<"User">>, [<<"Role">>, ...]}),  (185 ms) | (208 ms)                      |
-            show_roles({show_roles, <<"User">>}),                         (185 ms) | (2 ms)                        |
-        
-            show_allow_roles({show_allow_roles}).                         (1 ms)   | (1 ms)            (52000 r/s) | (17 ms)
+----
 
-        
-JSON requests example
------
-    {"method":"show_allow_roles"}
+open session
 
-    {"method":"show_all_users"}
-    {"method":"user_delete", "user":"mike_test"}
-    {"method":"user_add", "user":"mike_test"}
+    POST http://127.0.0.1:1913/session/open
+    Content-Type: application/json
+    {
+        "login": "admin",
+        "pass": "12345678"
+    }  
     
-    {"method":"roles_add", "user":"karl_test", "roles":["read"]}
-    {"method":"show_roles", "user":"karl_test"}
-    {"method":"roles_delete", "user":"karl_test", "roles":["exec"]}
+    - response 200 -
+    {
+        "success": {
+            "sid": "3c552a129a4711ef884b18c04d540e8a",
+            "ts_end": "2024-11-04 03:23:41",
+            "ts_start": "2024-11-04 02:53:41"
+        }
+    }
+    
+check sid
+
+    GET http://127.0.0.1:1913/session/check?sid=6cf1751a9da611ef8a7918c04d540e8a
+    Content-Type: application/json
+    
+    - response 200 -
+    {
+        "success": {
+            "active_session": true
+        }
+    }
+
+get login
+
+    GET http://127.0.0.1:1913/identification/login
+    Content-Type: application/json
+    sid: fdfdb23a9d4211efb25d18c04d540e8a
+    
+    - response 200 -
+    {
+        "success": {
+            "login": "admin"
+        }
+    }
+
+get roles
+
+    POST http://127.0.0.1:1913/authorization/roles
+    Content-Type: application/json
+    sid: fdfdb23a9d4211efb25d18c04d540e8a
+    {
+        "subsystem": "authHub"
+    }
+
+    - response 200 -
+    {
+    "success": {
+        "roles": [
+            "am",
+            "cr"
+        ],
+        "subsystem": "authHub"
+    }
+    }
+
+create users
+
+    POST http://127.0.0.1:1913/api
+    Content-Type: application/json
+    sid: 7a9bdcfea34c11ef801c18c04d540e8a
+    {
+        "method": "create_users",
+        "users": [
+            {
+                "login": "kv190901kma",
+                "pass": "22222222"
+            }
+        ]
+    }
+
+    - response 200 -
+    {
+        "users": [
+            {
+                "login": "kv190901kma",
+                "success": true
+            }
+        ]
+    }
+
+delete users
+
+    POST http://127.0.0.1:1913/api
+    Content-Type: application/json
+    sid: 7a9bdcfea34c11ef801c18c04d540e8a
+    {
+        "method": "delete_users",
+        "logins": ["MissL", "Mr_L"]
+    }
+
+    - response 200 -
+    {
+        "users": [
+            {
+                "login": "MissL",
+                "success": true
+            },
+            {
+                "login": "Mr_L",
+                "success": true
+            }
+        ]
+    }
+
+get all users info
+
+    GET http://127.0.0.1:1913/api/users/info
+    Content-Type: application/json
+    sid: 7a9bdcfea34c11ef801c18c04d540e8a
+    
+    - response 200 -
+    {
+        "success": {
+            "info": [
+                {
+                    "has_active_sid": true,
+                    "login": "admin",
+                    "subsystem_roles": {
+                        "authHub": ["cr", "am"]
+                    }
+                },
+                {
+                    "active_sid": false,
+                    "login": "broker",
+                    "subsystem_roles": {
+                        "mainBroker": ["am"]
+                    }
+                }
+            ]
+        }
+    }
+
+get allow subsystems roles
+
+    GET http://127.0.0.1:1913/api/allow/subsystems/roles/info
+    Content-Type: application/json
+    sid: 7a9bdcfea34c11ef801c18c04d540e8a
+
+    - response 200 -
+    {
+    "success": {
+        "info": [
+            {
+                "allow_roles": [
+                    {
+                        "description": "All admin roles",
+                        "role": "am"
+                    },
+                    {
+                        "description": "Delete user roles",
+                        "role": "dr"
+                    },
+                    {
+                        "description": "Add roles for user",
+                        "role": "ar"
+                    },
+                    {
+                        "description": "Delete users",
+                        "role": "dl"
+                    },
+                    {
+                        "description": "Create users",
+                        "role": "cr"
+                    }
+                ],
+                "description": "Service auth_hub",
+                "subsystem": "authHub"
+            },
+            {
+                "allow_roles": [
+                    {
+                        "description": "Administrator - all roles",
+                        "role": "am"
+                    }
+                ],
+                "description": "Service main_broker",
+                "subsystem": "mainBroker"
+            },
+            {
+                "allow_roles": [],
+                "description": "Service where application save data",
+                "subsystem": "bigBag"
+            }
+        ]
+    }
+    }
+
+add roles 
+
+    POST http://127.0.0.1:1913/api/roles/change
+    Content-Type: application/json
+    sid: 7a9bdcfea34c11ef801c18c04d540e8a
+    {
+    "method": "add_roles",
+    "changes": [
+        {
+            "login": "kv190901kma",
+            "subsystem": "authHub",
+            "roles": ["cr", "dl"]
+        },
+        {
+            "login": "dn190901kma",
+            "subsystem": "authHub",
+            "roles": ["cr", "dl"]
+        }
+    ]
+    }
+
+    - response 200 -
+    {
+    "results": [
+        {
+            "login": "kv190901kma",
+            "roles": [
+                "cr",
+                "dl"
+            ],
+            "subsystem": "authHub",
+            "success": true
+        },
+        {
+            "login": "dn190901kma",
+            "roles": [
+                "cr",
+                "dl"
+            ],
+            "subsystem": "authHub",
+            "success": true
+        }
+    ]
+    }
+
+remove roles
+
+    POST http://127.0.0.1:1913/api/roles/change
+    Content-Type: application/json
+    sid: 7a9bdcfea34c11ef801c18c04d540e8a
+    {
+    "method": "remove_roles",
+    "changes": [
+        {
+            "login": "kv190901kma",
+            "subsystem": "authHub",
+            "roles": ["cr", "dl"]
+        },
+        {
+            "login": "dn190901kma",
+            "subsystem": "authHub",
+            "roles": ["cr", "dl"]
+        }
+    ]
+    }
+
+    - response 200 -
+    {
+    "results": [
+        {
+            "login": "kv190901kma",
+            "roles": [
+                "cr",
+                "dl"
+            ],
+            "subsystem": "authHub",
+            "success": true
+        },
+        {
+            "login": "dn190901kma",
+            "roles": [
+                "cr",
+                "dl"
+            ],
+            "subsystem": "authHub",
+            "success": true
+        }
+    ]
+    }
+
+create roles
+
+    POST http://127.0.0.1:1913/api/allow/roles/change
+    Content-Type: application/json
+    sid: 7a9bdcfea34c11ef801c18c04d540e8a
+    {
+    "method": "create_roles",
+    "roles": [
+        {
+            "role": "tq",
+            "subsystem": "authHub",
+            "description": "test role"
+        }
+    ]
+    }
+
+    - response 200 -
+    {
+    "results": [
+        {
+            "role": "tq",
+            "subsystem": "authHub",
+            "success": true
+        }
+    ]
+    }
+
 
 
 PgSql Create scripts
+----
+Tables
 ---
--- Table: public.allow_roles
--- DROP TABLE IF EXISTS public.allow_roles;
-CREATE TABLE IF NOT EXISTS public.allow_roles
-(
-subsystem character varying COLLATE pg_catalog."default" NOT NULL,
-role character varying COLLATE pg_catalog."default" NOT NULL,
-description character varying COLLATE pg_catalog."default",
-CONSTRAINT allow_roles_pkey PRIMARY KEY (subsystem, role),
-CONSTRAINT c1 FOREIGN KEY (subsystem)
-REFERENCES public.allow_subsystems (subsystem) MATCH SIMPLE
-ON UPDATE NO ACTION
-ON DELETE NO ACTION
-NOT VALID
-)
-TABLESPACE pg_default;
-ALTER TABLE IF EXISTS public.allow_roles
-OWNER to admin;
+allow_roles
+
+    CREATE TABLE public.allow_roles (
+        subsystem varchar NOT NULL,
+        "role" varchar NOT NULL,
+        description varchar NULL,
+        CONSTRAINT allow_roles_pkey PRIMARY KEY (subsystem, role),
+        CONSTRAINT c1 FOREIGN KEY (subsystem) REFERENCES public.allow_subsystems(subsystem)
+    );
+
+allow_subsystems
+
+    CREATE TABLE public.allow_subsystems (
+	    subsystem varchar NOT NULL,
+	    description varchar NULL,
+	    CONSTRAINT allow_subsystems_pkey PRIMARY KEY (subsystem)
+    );
+
+roles
+
+    CREATE TABLE public.roles (
+	    login varchar(50) NOT NULL,
+	    subsystem varchar(10) NOT NULL,
+	    "role" varchar(10) NOT NULL,
+	    CONSTRAINT roles_pkey PRIMARY KEY (login, subsystem, role),
+	    CONSTRAINT const_1 FOREIGN KEY ("role",subsystem) REFERENCES <?>(),
+	    CONSTRAINT const_2 FOREIGN KEY (login) REFERENCES public.users(login)
+    );
+
+sids
+
+    CREATE TABLE public.sids (
+	    login varchar NOT NULL,
+	    sid varchar NOT NULL,
+	    ts_end timestamp NOT NULL,
+	    CONSTRAINT sids_pkey PRIMARY KEY (login),
+	    CONSTRAINT "unique" UNIQUE (sid),
+	    CONSTRAINT const1 FOREIGN KEY (login) REFERENCES public.users(login)
+    );
+
+users
+
+    CREATE TABLE public.users (
+	    login varchar(50) NOT NULL,
+	    passhash varchar(100) NOT NULL,
+	    CONSTRAINT login_pk PRIMARY KEY (login),
+	    CONSTRAINT unique_pass UNIQUE (passhash)
+    );
 
 
+Functions
+---
 
--- Table: public.allow_subsystems
--- DROP TABLE IF EXISTS public.allow_subsystems;
-CREATE TABLE IF NOT EXISTS public.allow_subsystems
-(
-subsystem character varying COLLATE pg_catalog."default" NOT NULL,
-description character varying COLLATE pg_catalog."default",
-CONSTRAINT allow_subsystems_pkey PRIMARY KEY (subsystem)
-)
-TABLESPACE pg_default;
-ALTER TABLE IF EXISTS public.allow_subsystems
-OWNER to admin;
+delete_user(varchar)
 
+    CREATE OR REPLACE FUNCTION public.delete_user(login_i character varying)
+        RETURNS character varying
+        LANGUAGE plpgsql
+    AS $function$#variable_conflict use_column
+    BEGIN
 
+	    DELETE FROM roles WHERE login=login_i;
+	    DELETE FROM sids WHERE login=login_i;
+	    DELETE FROM users WHERE login=login_i;
+	    RETURN 'ok';
 
--- Table: public.roles
--- DROP TABLE IF EXISTS public.roles;
-CREATE TABLE IF NOT EXISTS public.roles
-(
-login character varying(50) COLLATE pg_catalog."default" NOT NULL,
-subsystem character varying(10) COLLATE pg_catalog."default" NOT NULL,
-role character varying(10) COLLATE pg_catalog."default" NOT NULL,
-CONSTRAINT roles_pkey PRIMARY KEY (login, subsystem, role),
-CONSTRAINT const_1 FOREIGN KEY (role, subsystem)
-REFERENCES public.allow_roles (role, subsystem) MATCH SIMPLE
-ON UPDATE NO ACTION
-ON DELETE NO ACTION
-NOT VALID,
-CONSTRAINT const_2 FOREIGN KEY (login)
-REFERENCES public.users (login) MATCH SIMPLE
-ON UPDATE NO ACTION
-ON DELETE NO ACTION
-NOT VALID
-)
-TABLESPACE pg_default;
-ALTER TABLE IF EXISTS public.roles
-OWNER to admin;
-
-
-
--- Table: public.sids
--- DROP TABLE IF EXISTS public.sids;
-CREATE TABLE IF NOT EXISTS public.sids
-(
-login character varying COLLATE pg_catalog."default" NOT NULL,
-subsystem character varying COLLATE pg_catalog."default" NOT NULL,
-sid character varying COLLATE pg_catalog."default" NOT NULL,
-ts_end timestamp without time zone NOT NULL,
-CONSTRAINT sids_pkey PRIMARY KEY (login, subsystem),
-CONSTRAINT "unique" UNIQUE (sid),
-CONSTRAINT c2 FOREIGN KEY (subsystem)
-REFERENCES public.allow_subsystems (subsystem) MATCH SIMPLE
-ON UPDATE NO ACTION
-ON DELETE NO ACTION
-NOT VALID,
-CONSTRAINT const1 FOREIGN KEY (login)
-REFERENCES public.users (login) MATCH SIMPLE
-ON UPDATE NO ACTION
-ON DELETE NO ACTION
-)
-TABLESPACE pg_default;
-ALTER TABLE IF EXISTS public.sids
-OWNER to admin;
-
-
-
--- Table: public.users
--- DROP TABLE IF EXISTS public.users;
-CREATE TABLE IF NOT EXISTS public.users
-(
-login character varying(50) COLLATE pg_catalog."default" NOT NULL,
-passhash character varying(100) COLLATE pg_catalog."default" NOT NULL,
-CONSTRAINT users_pkey PRIMARY KEY (login)
-)
-TABLESPACE pg_default;
-ALTER TABLE IF EXISTS public.users
-OWNER to admin;
+    END;$function$
+    ;
