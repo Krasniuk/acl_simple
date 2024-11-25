@@ -19,7 +19,7 @@ handle_http_method(Req, Opts) ->
             {HttpCode, RespMap} = handle_sid(Url, Req),
             ?LOG_DEBUG("Get reply ~p", [HttpCode]),
             {HttpCode, RespMap};
-        {<<"POST">>, [Url]} ->
+        {<<"POST">>, [Url]} when (Url =/= <<"/users/info">>) or (Url =/= <<"/allow/subsystems/roles/info">>) ->
             {HttpCode, RespMap} = handle_sid(Url, Req),
             ?LOG_DEBUG("Post reply ~p", [HttpCode]),
             {HttpCode, RespMap};
@@ -138,6 +138,8 @@ handle_method(<<"delete_roles">>, <<"/allow/roles/change">>, BodyMap) ->
     auth_hub_api_allow:delete_roles(BodyMap);
 handle_method(<<"create_subsystems">>, <<"/allow/subsystems/change">>, BodyMap) ->
     auth_hub_api_allow:create_subsystems(BodyMap);
+handle_method(<<"delete_subsystems">>, <<"/allow/subsystems/change">>, BodyMap) ->
+    auth_hub_api_allow:delete_subsystems(BodyMap);
 handle_method(Method, Url, OtherBody) ->
     ?LOG_ERROR("Invalid request format ~p, ~p, ~p", [Method, Url, OtherBody]),
     {422, ?RESP_FAIL(<<"invalid request format">>)}.
@@ -236,10 +238,7 @@ delete_users([Login | T], PgPid) ->
                     ok = ets_delete_sid(Login),
                     [#{<<"login">> => Login, <<"success">> => true} | delete_users(T, PgPid)]
             end
-    end;
-delete_users([Login | T], PgPid) ->
-    ?LOG_ERROR("delete_users invalid params, login ~p", [Login]),
-    [?RESP_FAIL_USERS(Login, <<"invalid login">>) | delete_users(T, PgPid)].
+    end.
 
 -spec ets_delete_sid(binary()) -> ok.
 ets_delete_sid(Login) ->

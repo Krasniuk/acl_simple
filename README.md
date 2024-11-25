@@ -412,6 +412,30 @@ create subsystems
     ]
     }
 
+delete subsystems 
+
+    POST http://127.0.0.1:1913/api/allow/subsystems/change
+    Content-Type: application/json
+    sid: 7a9bdcfea34c11ef801c18c04d540e8a
+    {
+        "method": "delete_subsystems",
+        "subsystems": ["test", "authHub"]
+    }
+
+    - response 200 -
+    {
+    "results": [
+        {
+            "subsystem": "test",
+            "success": true
+        },
+        {
+            "reason": "root subsystem",
+            "subsystem": "authHub",
+            "success": false
+        }
+    ]
+    }
 
 
 
@@ -504,3 +528,21 @@ delete_allow_role(varchar, varchar)
 	    END;
     $function$
     ;
+
+delete_subsystem(varchar)
+
+    CREATE OR REPLACE FUNCTION public.delete_subsystem(subsystem_i character varying)
+ 	    RETURNS character varying
+ 	    LANGUAGE plpgsql
+    AS $function$#variable_conflict use_column
+        BEGIN
+
+	    DELETE FROM roles WHERE subsystem=subsystem_i;
+	    DELETE FROM allow_roles WHERE subsystem=subsystem_i;
+	    DELETE FROM allow_subsystems WHERE subsystem=subsystem_i;
+	    RETURN 'ok';
+
+	    END;
+    $function$
+    ;
+

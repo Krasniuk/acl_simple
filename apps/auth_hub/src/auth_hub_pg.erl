@@ -202,6 +202,7 @@ parse(Conn) ->
     {ok, _} = epgsql:parse(Conn, "insert_allow_role", "insert into allow_roles (subsystem, role, description) values ($1, $2, $3)", [varchar, varchar, varchar]),
     {ok, _} = epgsql:parse(Conn, "delete_allow_role", "select * from delete_allow_role($1, $2)", [varchar, varchar]),
     {ok, _} = epgsql:parse(Conn, "insert_allow_subsystem", "insert into allow_subsystems (subsystem, description) values ($1, $2)", [varchar, varchar]),
+    {ok, _} = epgsql:parse(Conn, "delete_subsystem", "select * from delete_subsystem($1)", [varchar]),
 
     ok.
 
