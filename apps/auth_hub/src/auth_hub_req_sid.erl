@@ -1,4 +1,4 @@
--module(auth_hub_sid_handler).
+-module(auth_hub_req_sid).
 -author('Mykhailo Krasniuk <miha.190901@gmail.com>').
 
 -export([init/2]).
@@ -62,10 +62,10 @@ get_session(Login, PassWord) ->
             case binary_to_list(PermitHash) =:= PassHash of
                 true ->
                     Ts = calendar:local_time(),
-                    TsStart = auth_hub_helper:ts_to_bin(Ts),
+                    TsStart = auth_hub_tools:ts_to_bin(Ts),
                     TsSec = calendar:datetime_to_gregorian_seconds(Ts),
                     DateEnd = calendar:gregorian_seconds_to_datetime(TsSec + 1800),
-                    TsEnd = auth_hub_helper:ts_to_bin(DateEnd),
+                    TsEnd = auth_hub_tools:ts_to_bin(DateEnd),
                     case create_sid(Login, DateEnd) of
                         error ->
                             {502, ?RESP_FAIL(<<"invalid db response">>)};
@@ -142,7 +142,7 @@ handle_get_req(#{qs := ParamsRow}) ->
             {400, ?RESP_FAIL(<<"invalid params in uri">>)};
         OtherParams ->
             Sid = proplists:get_value(<<"sid">>, OtherParams, undefined),
-            case auth_hub_helper:check_sid(Sid) of
+            case auth_hub_tools:check_sid(Sid) of
                 error ->
                     {400, ?RESP_FAIL(<<"invalid sid in uri">>)};
                 legacy_sid ->
