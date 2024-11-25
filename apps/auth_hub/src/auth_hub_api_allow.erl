@@ -43,6 +43,7 @@ create_subsys_handler([#{<<"subsystem">> := SubSys, <<"description">> := Desc} |
                     [Resp | create_subsys_handler(T, PgPid)];
                 {ok, 1} ->
                     Resp = #{<<"success">> => true, <<"subsystem">> => SubSys},
+                    true = ets:insert(subsys_cache, {SubSys}),
                     [Resp | create_subsys_handler(T, PgPid)]
             end;
         false ->
