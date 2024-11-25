@@ -21,17 +21,18 @@ start(normal, _StartArgs) ->
     {ok, Port} = application:get_env(auth_hub, listen_port),
     Dispatch = cowboy_router:compile([
         {'_', [
-            {"/api/users/info",                   auth_hub_api_handler, [<<"/users/info">>]},
-            {"/api/users",                        auth_hub_api_handler, [<<"/users">>]},
-            {"/api/roles/change",                 auth_hub_api_handler, [<<"/roles/change">>]},
-            {"/api/allow/subsystems/roles/info",  auth_hub_api_handler, [<<"/allow/subsystems/roles/info">>]},
-            {"/api/allow/roles/change",           auth_hub_api_handler, [<<"/allow/roles/change">>]},
+            {"/api/users/info",                   auth_hub_req_api, [<<"/users/info">>]},
+            {"/api/users",                        auth_hub_req_api, [<<"/users">>]},
+            {"/api/roles/change",                 auth_hub_req_api, [<<"/roles/change">>]},
+            {"/api/allow/subsystems/roles/info",  auth_hub_req_api, [<<"/allow/subsystems/roles/info">>]},
+            {"/api/allow/roles/change",           auth_hub_req_api, [<<"/allow/roles/change">>]},
+            {"/api/allow/subsystems/change",      auth_hub_req_api, [<<"/allow/subsystems/change">>]},
 
-            {"/session/open",         auth_hub_sid_handler, [open_session]},
-            {"/session/check",        auth_hub_sid_handler, [check_sid]},
+            {"/session/open",         auth_hub_req_sid, [open_session]},
+            {"/session/check",        auth_hub_req_sid, [check_sid]},
 
-            {"/authorization/roles",  auth_hub_auth_handler, [get_roles]},
-            {"/identification/login", auth_hub_auth_handler, [get_ldap]}
+            {"/authorization/roles",  auth_hub_req_auth, [get_roles]},
+            {"/identification/login", auth_hub_req_auth, [get_ldap]}
         ]}
     ]),
     {ok, _} = cowboy:start_clear(http, [{port, Port}], #{

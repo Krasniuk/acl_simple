@@ -1,4 +1,4 @@
--module(auth_hub_auth_handler).
+-module(auth_hub_req_auth).
 -author('Mykhailo Krasniuk <miha.190901@gmail.com>').
 
 -export([init/2]).
@@ -37,7 +37,7 @@ handle_post(Method, _, Req, _ActionKey) ->
 
 -spec handle_req(binary(), binary()|undefined) -> {integer(), map()}.
 handle_req(Body, Sid) ->
-    case auth_hub_helper:check_sid(Sid) of
+    case auth_hub_tools:check_sid(Sid) of
         {Sid, Login, null, TsEnd} ->
             case auth_hub_pg:get_roles(Login) of
                 null ->
@@ -76,7 +76,7 @@ handle_body(Body, RolesMap) ->
 
 -spec handle_req(binary()|undefined) -> {integer(), map()}.
 handle_req(Sid) ->
-    case auth_hub_helper:check_sid(Sid) of
+    case auth_hub_tools:check_sid(Sid) of
         {Sid, Login, _RolesMap, _TsEnd} ->
             {200, ?RESP_SUCCESS_LOGIN(Login)};
         _Error ->

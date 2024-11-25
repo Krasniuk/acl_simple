@@ -92,7 +92,7 @@ get roles
 
 create users
 
-    POST http://127.0.0.1:1913/api
+    POST http://127.0.0.1:1913/api/users
     Content-Type: application/json
     sid: 7a9bdcfea34c11ef801c18c04d540e8a
     {
@@ -117,7 +117,7 @@ create users
 
 delete users
 
-    POST http://127.0.0.1:1913/api
+    POST http://127.0.0.1:1913/api/users
     Content-Type: application/json
     sid: 7a9bdcfea34c11ef801c18c04d540e8a
     {
@@ -378,6 +378,67 @@ delete allow roles
     ]
     }
 
+create subsystems
+
+    POST http://127.0.0.1:1913/api/allow/subsystems/change
+    Content-Type: application/json
+    sid: 7a9bdcfea34c11ef801c18c04d540e8a
+    {
+    "method": "create_subsystems",
+    "subsystems": [
+        {
+            "subsystem": "test3",
+            "description": "test sumsystem"
+        },
+        {
+            "subsystem": "test2",
+            "description": "test sumsystem"
+        }
+    ]
+    }
+
+    - response 200 -
+    {
+    "results": [
+        {
+            "subsystem": "test3",
+            "success": true
+        },
+        {
+            "reason": "role exists",
+            "subsystem": "test2",
+            "success": false
+        }
+    ]
+    }
+
+delete subsystems 
+
+    POST http://127.0.0.1:1913/api/allow/subsystems/change
+    Content-Type: application/json
+    sid: 7a9bdcfea34c11ef801c18c04d540e8a
+    {
+        "method": "delete_subsystems",
+        "subsystems": ["test", "authHub"]
+    }
+
+    - response 200 -
+    {
+    "results": [
+        {
+            "subsystem": "test",
+            "success": true
+        },
+        {
+            "reason": "root subsystem",
+            "subsystem": "authHub",
+            "success": false
+        }
+    ]
+    }
+
+
+
 
 PgSql Create scripts
 ----
@@ -451,3 +512,37 @@ delete_user(varchar)
 
     END;$function$
     ;
+
+delete_allow_role(varchar, varchar)
+
+    CREATE OR REPLACE FUNCTION public.delete_allow_role(subsystem_i character varying, role_i character varying)
+	    RETURNS character varying
+ 	    LANGUAGE plpgsql
+    AS $function$#variable_conflict use_column
+        BEGIN
+
+	    DELETE FROM roles WHERE role=role_i and subsystem=subsystem_i;
+	    DELETE FROM allow_roles WHERE role=role_i and subsystem=subsystem_i;
+	    RETURN 'ok';
+	
+	    END;
+    $function$
+    ;
+
+delete_subsystem(varchar)
+
+    CREATE OR REPLACE FUNCTION public.delete_subsystem(subsystem_i character varying)
+ 	    RETURNS character varying
+ 	    LANGUAGE plpgsql
+    AS $function$#variable_conflict use_column
+        BEGIN
+
+	    DELETE FROM roles WHERE subsystem=subsystem_i;
+	    DELETE FROM allow_roles WHERE subsystem=subsystem_i;
+	    DELETE FROM allow_subsystems WHERE subsystem=subsystem_i;
+	    RETURN 'ok';
+
+	    END;
+    $function$
+    ;
+
