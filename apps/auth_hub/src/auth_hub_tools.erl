@@ -3,7 +3,7 @@
 
 -export([ts_to_bin/1]).
 -export([check_sid/1, check_roles/2]).
--export([validation/2, valid_login/1, valid_subsystems/1]).
+-export([validation/2, valid_login/1, valid_subsystems/1, valid_roles/1]).
 
 
 -spec ts_to_bin(DateTs::tuple()) -> binary().

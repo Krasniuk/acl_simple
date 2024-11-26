@@ -164,7 +164,7 @@ delete users
     }
 
 get all users info
-(subsystem authHub has spaces)
+(subsystem authHub has spaces "success" -> "info" -> "subsystem_roles" -> "authHub"(subsystem) -> "authHub"(space) -> "am"(role))
 
     GET http://127.0.0.1:1913/api/users/info
     Content-Type: application/json
