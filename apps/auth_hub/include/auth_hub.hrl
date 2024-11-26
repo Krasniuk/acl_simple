@@ -9,15 +9,15 @@
 
 -define(SERVICE_SUBSYSTEM, <<"authHub">>).
 -define(API_PERMIT_ROLES, #{
-    {<<>>,                    <<"/allow/subsystems/roles/info">>} => [],
-    {<<"create_roles">>,      <<"/allow/roles/change">>} =>          [<<"am">>],
-    {<<"delete_roles">>,      <<"/allow/roles/change">>} =>          [<<"am">>],
+    {<<>>,                    <<"/allow/subsystems/roles/info">>} => [<<"am">>, <<"la">>, <<"se">>],
+    {<<"create_roles">>,      <<"/allow/roles/change">>} =>          [<<"am">>, <<"la">>],
+    {<<"delete_roles">>,      <<"/allow/roles/change">>} =>          [<<"am">>, <<"la">>],
     {<<"create_subsystems">>, <<"/allow/subsystems/change">>} =>     [<<"am">>],
     {<<"delete_subsystems">>, <<"/allow/subsystems/change">>} =>     [<<"am">>],
 
     {<<"create_users">>,      <<"/users">>} =>                       [<<"am">>, <<"la">>, <<"cr">>],
     {<<"delete_users">>,      <<"/users">>} =>                       [<<"am">>, <<"la">>, <<"dl">>],
-    {<<>>,                    <<"/users/info">>} =>                  [<<"am">>, <<"se">>],
+    {<<>>,                    <<"/users/info">>} =>                  [<<"am">>, <<"la">>, <<"se">>],
 
     {<<"add_roles">>,         <<"/roles/change">>} =>                [<<"am">>, <<"la">>, <<"ar">>],
     {<<"remove_roles">>,      <<"/roles/change">>} =>                [<<"am">>, <<"la">>, <<"dr">>]

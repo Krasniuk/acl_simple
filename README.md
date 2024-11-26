@@ -164,6 +164,7 @@ delete users
     }
 
 get all users info
+(subsystem authHub has spaces)
 
     GET http://127.0.0.1:1913/api/users/info
     Content-Type: application/json
@@ -171,24 +172,50 @@ get all users info
     
     - response 200 -
     {
-        "success": {
-            "info": [
-                {
-                    "has_active_sid": true,
-                    "login": "admin",
-                    "subsystem_roles": {
-                        "authHub": ["cr", "am"]
-                    }
-                },
-                {
-                    "active_sid": false,
-                    "login": "broker",
-                    "subsystem_roles": {
-                        "mainBroker": ["am"]
-                    }
+    "success": {
+        "info": [
+            {
+                "has_activ_sid": true,
+                "login": "admin",
+                "subsystem_roles": {
+                    "authHub": {
+                        "authHub": [
+                            "am"
+                        ],
+                        "bigBag": [
+                            "am"
+                        ],
+                        "mainBroker": [
+                            "am"
+                        ],
+                        "testSubsys": [
+                            "am"
+                        ]
+                    },
+                    "bigBag": [],
+                    "mainBroker": [],
+                    "testSubsys": []
                 }
-            ]
-        }
+            },
+            {
+                "has_activ_sid": true,
+                "login": "broker",
+                "subsystem_roles": {
+                    "authHub": {
+                        "authHub": [],
+                        "bigBag": [],
+                        "mainBroker": [
+                            "am"
+                        ],
+                        "testSubsys": []
+                    },
+                    "bigBag": [],
+                    "mainBroker": [],
+                    "testSubsys": []
+                }
+            }
+        ]
+    }
     }
 
 get allow subsystems roles

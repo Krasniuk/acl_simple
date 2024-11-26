@@ -78,7 +78,7 @@ create_subsys_handler([], _) -> [];
 create_subsys_handler([#{<<"subsystem">> := SubSys, <<"description">> := Desc} | T], PgPid) ->
     case auth_hub_tools:validation(create_subsystems, {SubSys, Desc}) of
         true ->
-            case auth_hub_pg:insert(PgPid, "insert_allow_subsystem", [SubSys, Desc]) of
+            case auth_hub_pg:select(PgPid, "insert_allow_subsystem", [SubSys, Desc]) of
                 {error, {_, _, _, unique_violation, _, _} = Reason} ->
                     ?LOG_ERROR("create_subsystems user have one of this roles, ~p", [Reason]),
                     Resp = #{<<"success">> => false, <<"reason">> => <<"role exists">>, <<"subsystem">> => SubSys},
@@ -87,7 +87,7 @@ create_subsys_handler([#{<<"subsystem">> := SubSys, <<"description">> := Desc} |
                     ?LOG_ERROR("create_subsystems db error ~p", [Reason]),
                     Resp = #{<<"success">> => false, <<"reason">> => <<"invalid db response">>, <<"subsystem">> => SubSys},
                     [Resp | create_subsys_handler(T, PgPid)];
-                {ok, 1} ->
+                {ok, _, [{<<"ok">>}]} ->
                     Resp = #{<<"success">> => true, <<"subsystem">> => SubSys},
                     true = ets:insert(subsys_cache, {SubSys}),
                     [Resp | create_subsys_handler(T, PgPid)]

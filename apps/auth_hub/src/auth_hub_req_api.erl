@@ -72,24 +72,39 @@ handle_body(Url, RolesMap, Req) ->
     end.
 
 -spec handle_auth(binary(), binary(), map(), map()) -> {integer(), map()}.
-handle_auth(Method, Url, RolesMap, BodyMap) ->
-    Roles = maps:get(?SERVICE_SUBSYSTEM, RolesMap, []),
+handle_auth(Method, Url, #{<<"authHub">> := Spaces}, BodyMap) ->
     case maps:get({Method, Url}, ?API_PERMIT_ROLES, undefined) of
         undefined ->
             ?LOG_ERROR("Invalid method", []),
             {422, ?RESP_FAIL(<<"invalid method">>)};
         PermitRoles ->
-            case auth_hub_tools:check_roles(Roles, PermitRoles) of
-                false ->
-                    ?LOG_ERROR("Absent roles ~p in ~p", [PermitRoles, Roles]),
+            Keys = maps:keys(Spaces),
+            case get_access_spaces(Keys, Spaces, PermitRoles) of
+                [] ->
+                    ?LOG_ERROR("Absent roles ~p in ~p", [PermitRoles, Spaces]),
                     {401, ?RESP_FAIL(<<"absent role">>)};
-                true ->
-                    handle_method(Method, Url, BodyMap)
+                SpacesAccess ->
+                    handle_method(Method, Url, BodyMap, SpacesAccess)
             end
+    end;
+handle_auth(_, _, RolesMap, _) ->
+    ?LOG_ERROR("Absent roles ~p", [RolesMap]),
+    {401, ?RESP_FAIL(<<"absent role">>)}.
+
+-spec get_access_spaces(list(), map(), list()) -> list().
+get_access_spaces([], _SpacesMap, _PermitRoles) -> [];
+get_access_spaces([Space | T], SpacesMap, PermitRoles) ->
+    #{Space := Roles} = SpacesMap,
+    case auth_hub_tools:check_roles(Roles, PermitRoles) of
+        true ->
+            [Space | get_access_spaces(T, SpacesMap, PermitRoles)];
+        false ->
+            get_access_spaces(T, SpacesMap, PermitRoles)
     end.
 
--spec handle_method(binary(), binary(), map()) -> {integer(), binary()}.
-handle_method(<<"create_users">>, <<"/users">>, #{<<"users">> := ListMap}) when is_list(ListMap) ->
+
+-spec handle_method(binary(), binary(), map(), list()) -> {integer(), binary()}.
+handle_method(<<"create_users">>, <<"/users">>, #{<<"users">> := ListMap}, _) when is_list(ListMap) ->
     try poolboy:checkout(pg_pool, 1000) of
         full ->
             ?LOG_ERROR("No workers in pg_pool", []),
@@ -103,7 +118,7 @@ handle_method(<<"create_users">>, <<"/users">>, #{<<"users">> := ListMap}) when 
             ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
             {429, ?RESP_FAIL(<<"too many requests">>)}
     end;
-handle_method(<<"delete_users">>, <<"/users">>, #{<<"logins">> := ListMap}) when is_list(ListMap) ->
+handle_method(<<"delete_users">>, <<"/users">>, #{<<"logins">> := ListMap}, _) when is_list(ListMap) ->
     try poolboy:checkout(pg_pool, 1000) of
         full ->
             ?LOG_ERROR("No workers in pg_pool", []),
@@ -117,58 +132,98 @@ handle_method(<<"delete_users">>, <<"/users">>, #{<<"logins">> := ListMap}) when
             ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
             {429, ?RESP_FAIL(<<"too many requests">>)}
     end;
-handle_method(<<>>, <<"/users/info">>, #{}) ->
+handle_method(<<>>, <<"/users/info">>, #{}, SpacesAccess) ->
     case auth_hub_pg:select("get_users_all_info", []) of
         {error, Reason} ->
             ?LOG_ERROR("Invalid db response, ~p", [Reason]),
             {502, ?RESP_FAIL(<<"invalid db response">>)};
         {ok, _Colons, DbResp} ->
-            UsersMap = parse_users_info(DbResp, #{}),
+            UsersMap = parse_users_info(DbResp, SpacesAccess, #{}),
 
             Logins = maps:keys(UsersMap),
             ListResp = construct_response(Logins, UsersMap),
             {200, ?RESP_SUCCESS(ListResp)}
     end;
-handle_method(Method, <<"/roles/change">>, BodyMap) ->
+handle_method(Method, <<"/roles/change">>, BodyMap, _) ->
     auth_hub_api_allow:change_roles(Method, BodyMap);
-handle_method(<<>>, <<"/allow/subsystems/roles/info">>, #{}) ->
+handle_method(<<>>, <<"/allow/subsystems/roles/info">>, #{}, _) ->
     auth_hub_api_allow:get_allow_roles();
-handle_method(<<"create_roles">>, <<"/allow/roles/change">>, BodyMap) ->
+handle_method(<<"create_roles">>, <<"/allow/roles/change">>, BodyMap, _) ->
     auth_hub_api_allow:create_roles(BodyMap);
-handle_method(<<"delete_roles">>, <<"/allow/roles/change">>, BodyMap) ->
+handle_method(<<"delete_roles">>, <<"/allow/roles/change">>, BodyMap, _) ->
     auth_hub_api_allow:delete_roles(BodyMap);
-handle_method(<<"create_subsystems">>, <<"/allow/subsystems/change">>, BodyMap) ->
+handle_method(<<"create_subsystems">>, <<"/allow/subsystems/change">>, BodyMap, _) ->
     auth_hub_api_allow:create_subsystems(BodyMap);
-handle_method(<<"delete_subsystems">>, <<"/allow/subsystems/change">>, BodyMap) ->
+handle_method(<<"delete_subsystems">>, <<"/allow/subsystems/change">>, BodyMap, _) ->
     auth_hub_api_allow:delete_subsystems(BodyMap);
-handle_method(Method, Url, OtherBody) ->
+handle_method(Method, Url, OtherBody, _) ->
     ?LOG_ERROR("Invalid request format ~p, ~p, ~p", [Method, Url, OtherBody]),
     {422, ?RESP_FAIL(<<"invalid request format">>)}.
 
 
 %% ========= get_all_users_info ====== /users/info =========
 
--spec parse_users_info(DbResp :: list(), map()) -> map().
-parse_users_info([], Result) -> Result;
-parse_users_info([{Login, null, null} | T], Result) ->
-    ListTab = ets:tab2list(subsys_cache),
-    SubSystems = add_subsyses(ListTab, #{}),
-    Result1 = Result#{Login => SubSystems},
-    parse_users_info(T, Result1);
-parse_users_info([{Login, SubSys, Role} | T], Result) ->
-    Result1 = case maps:get(Login, Result, null) of
-                  null ->
-                      ListTab = ets:tab2list(subsys_cache),
-                      SubSystems = add_subsyses(ListTab, #{}),
-                      Result#{Login => SubSystems#{SubSys => [Role]}};
-                  #{SubSys := Roles} = SubSyses ->
-                      Result#{Login := SubSyses#{SubSys := [Role | Roles]}}
-              end,
-    parse_users_info(T, Result1).
+-spec parse_users_info(DbResp :: list(), list(), map()) -> map().
+parse_users_info([], _SpacesAccess, Result) -> Result;
+parse_users_info([{Login, null, null, null} | T], SpacesAccess, Result) ->
+    SubSystems = add_subsyses(SpacesAccess, #{}),
+    case lists:member(<<"authHub">>, SpacesAccess) of
+        false ->
+            Result1 = Result#{Login => SubSystems},
+            parse_users_info(T, SpacesAccess, Result1);
+        true ->
+            ListTab = ets:tab2list(subsys_cache),
+            AllSpaces = add_subsyses(ListTab, #{}),
+            Result1 = Result#{Login => SubSystems#{<<"authHub">> := AllSpaces}},
+            parse_users_info(T, SpacesAccess, Result1)
+    end;
+parse_users_info([{Login, <<"authHub">>, Role, Space} | T], SpacesAccess, Result) ->
+    case lists:member(<<"authHub">>, SpacesAccess) of
+        true ->
+            case maps:get(Login, Result, null) of
+                null ->
+                    ListTab = ets:tab2list(subsys_cache),
+                    Subsystems = add_subsyses(SpacesAccess, #{}),
+                    AllSpaces = add_subsyses(ListTab, #{}),
+                    Result1 = Result#{Login => Subsystems#{<<"authHub">> => AllSpaces#{Space := [Role]}}},
+                    parse_users_info(T, SpacesAccess, Result1);
+                #{<<"authHub">> := Spaces} = SubSyses ->
+                    case maps:get(Space, Spaces, null) of
+                        null ->
+                            ListTab = ets:tab2list(subsys_cache),
+                            AllSpaces = add_subsyses(ListTab, #{}),
+                            Result1 = Result#{Login := SubSyses#{<<"authHub">> := AllSpaces#{Space := [Role]}}},
+                            parse_users_info(T, SpacesAccess, Result1);
+                        Roles ->
+                            Result1 = Result#{Login := SubSyses#{<<"authHub">> := Spaces#{Space := [Role | Roles]}}},
+                            parse_users_info(T, SpacesAccess, Result1)
+                    end
+            end;
+        false ->
+            parse_users_info(T, SpacesAccess, Result)
+    end;
+parse_users_info([{Login, SubSys, Role, _Space} | T], SpacesAccess, Result) ->
+    case lists:member(SubSys, SpacesAccess) of
+        true ->
+            case maps:get(Login, Result, null) of
+                null ->
+                    SubSystems = add_subsyses(SpacesAccess, #{}),
+                    Result1 = Result#{Login => SubSystems#{SubSys => [Role]}},
+                    parse_users_info(T, SpacesAccess, Result1);
+                #{SubSys := Roles} = SubSyses ->
+                    Result1 = Result#{Login := SubSyses#{SubSys := [Role | Roles]}},
+                    parse_users_info(T, SpacesAccess, Result1)
+            end;
+        false ->
+            parse_users_info(T, SpacesAccess, Result)
+    end.
 
 -spec add_subsyses(list(), map()) -> map().
 add_subsyses([], Result) -> Result;
 add_subsyses([{SubSys} | T], Result) ->
+    Result1 = Result#{SubSys => []},
+    add_subsyses(T, Result1);
+add_subsyses([SubSys | T], Result) ->
     Result1 = Result#{SubSys => []},
     add_subsyses(T, Result1).
 
