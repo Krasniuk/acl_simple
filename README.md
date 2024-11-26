@@ -464,14 +464,28 @@ allow_subsystems
 
 roles
 
-    CREATE TABLE public.roles (
-	    login varchar(50) NOT NULL,
-	    subsystem varchar(10) NOT NULL,
-	    "role" varchar(10) NOT NULL,
-	    CONSTRAINT roles_pkey PRIMARY KEY (login, subsystem, role),
-	    CONSTRAINT const_1 FOREIGN KEY ("role",subsystem) REFERENCES <?>(),
-	    CONSTRAINT const_2 FOREIGN KEY (login) REFERENCES public.users(login)
-    );
+    CREATE TABLE IF NOT EXISTS public.roles
+    (
+        login character varying(50) COLLATE pg_catalog."default" NOT NULL,
+        subsystem character varying(10) COLLATE pg_catalog."default" NOT NULL,
+        role character varying(10) COLLATE pg_catalog."default" NOT NULL,
+        CONSTRAINT roles_pkey PRIMARY KEY (login, subsystem, role),
+        CONSTRAINT const_1 FOREIGN KEY (role, subsystem)
+            REFERENCES public.allow_roles (role, subsystem) MATCH SIMPLE
+            ON UPDATE NO ACTION
+            ON DELETE NO ACTION
+            NOT VALID,
+        CONSTRAINT const_2 FOREIGN KEY (login)
+            REFERENCES public.users (login) MATCH SIMPLE
+            ON UPDATE NO ACTION
+            ON DELETE NO ACTION
+            NOT VALID
+    )
+
+    TABLESPACE pg_default;
+
+    ALTER TABLE IF EXISTS public.roles
+        OWNER to admin;
 
 sids
 

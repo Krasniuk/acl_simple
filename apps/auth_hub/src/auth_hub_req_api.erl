@@ -124,6 +124,7 @@ handle_method(<<>>, <<"/users/info">>, #{}) ->
             {502, ?RESP_FAIL(<<"invalid db response">>)};
         {ok, _Colons, DbResp} ->
             UsersMap = parse_users_info(DbResp, #{}),
+
             Logins = maps:keys(UsersMap),
             ListResp = construct_response(Logins, UsersMap),
             {200, ?RESP_SUCCESS(ListResp)}

@@ -319,7 +319,7 @@ handler_change_roles(<<"add_roles">>, [#{<<"login">> := Login, <<"subsystem">> :
                             [MapResp | handler_change_roles(<<"add_roles">>, T)];
                         {error, {_, _, _, foreign_key_violation, _, _} = Reason} ->
                             ?LOG_ERROR("handler_change_roles invalid login, ~p", [Reason]),
-                            MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"invalid login">>},
+                            MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"invalid params value">>},
                             [MapResp | handler_change_roles(<<"add_roles">>, T)];
                         {error, Reason} ->
                             ?LOG_ERROR("handler_change_roles db error ~p", [Reason]),
