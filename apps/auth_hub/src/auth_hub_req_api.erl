@@ -139,15 +139,14 @@ handle_method(<<>>, <<"/users/info">>, #{}, SpacesAccess) ->
             {502, ?RESP_FAIL(<<"invalid db response">>)};
         {ok, _Colons, DbResp} ->
             UsersMap = parse_users_info(DbResp, SpacesAccess, #{}),
-
             Logins = maps:keys(UsersMap),
             ListResp = construct_response(Logins, UsersMap),
             {200, ?RESP_SUCCESS(ListResp)}
     end;
 handle_method(Method, <<"/roles/change">>, BodyMap, _) ->
     auth_hub_api_allow:change_roles(Method, BodyMap);
-handle_method(<<>>, <<"/allow/subsystems/roles/info">>, #{}, _) ->
-    auth_hub_api_allow:get_allow_roles();
+handle_method(<<>>, <<"/allow/subsystems/roles/info">>, #{}, SpacesAccess) ->
+    auth_hub_api_allow:get_allow_roles(SpacesAccess);
 handle_method(<<"create_roles">>, <<"/allow/roles/change">>, BodyMap, _) ->
     auth_hub_api_allow:create_roles(BodyMap);
 handle_method(<<"delete_roles">>, <<"/allow/roles/change">>, BodyMap, _) ->

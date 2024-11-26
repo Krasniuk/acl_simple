@@ -1,7 +1,7 @@
 -module(auth_hub_api_allow).
 -author('Mykhailo Krasniuk <miha.190901@gmail.com>').
 
--export([create_subsystems/1, delete_roles/1, create_roles/1, get_allow_roles/0, change_roles/2]).
+-export([create_subsystems/1, delete_roles/1, create_roles/1, get_allow_roles/1, change_roles/2]).
 -export([delete_subsystems/1]).
 
 -include("auth_hub.hrl").
@@ -219,14 +219,14 @@ create_roles_handler([MapReq | T], PgPid) ->
 
 %% ========= get_allow_roles ====== /api/roles/allow/info =========
 
--spec get_allow_roles() -> {integer(), map()}.
-get_allow_roles() ->
+-spec get_allow_roles(list()) -> {integer(), map()}.
+get_allow_roles(SpacesAccess) ->
     try poolboy:checkout(pg_pool, 1000) of
         full ->
             ?LOG_ERROR("No workers in pg_pool", []),
             {429, ?RESP_FAIL(<<"too many requests">>)};
         PgPid ->
-            Resp = get_allow_roles(PgPid),
+            Resp = get_allow_roles(PgPid, SpacesAccess),
             ok = poolboy:checkin(pg_pool, PgPid),
             Resp
     catch
@@ -235,8 +235,8 @@ get_allow_roles() ->
             {429, ?RESP_FAIL(<<"too many requests">>)}
     end.
 
--spec get_allow_roles(pid()) -> list().
-get_allow_roles(PgPid) ->
+-spec get_allow_roles(pid(), list()) -> list().
+get_allow_roles(PgPid, SpacesAccess) ->
     case auth_hub_pg:select(PgPid, "get_allow_roles", []) of
         {error, Reason} ->
             ?LOG_ERROR("get_allow_roles db error ~p", [Reason]),
@@ -248,7 +248,7 @@ get_allow_roles(PgPid) ->
                     ?LOG_ERROR("get_allow_roles db error ~p", [Reason]),
                     {502, ?RESP_FAIL(<<"invalid db response">>)};
                 {ok, _, DbValues1} ->
-                    MapResp = parse_allow_subsystems(DbValues1, MapAllRoles),
+                    MapResp = parse_allow_subsystems(DbValues1, MapAllRoles, SpacesAccess),
                     {200, ?RESP_SUCCESS(MapResp)}
             end
     end.
@@ -267,12 +267,18 @@ parse_allow_roles([{SubSys, DbRole, Description} | T], Result) ->
               end,
     parse_allow_roles(T, Result1).
 
--spec parse_allow_subsystems(DbResp :: list(), map()) -> list().
-parse_allow_subsystems([], _MapAllRoles) -> [];
-parse_allow_subsystems([{SubSys, Description} | T], MapAllRoles) ->
-    #{SubSys := Roles} = MapAllRoles,
-    MapResp = #{<<"subsystem">> => SubSys, <<"roles">> => Roles, <<"description">> => Description},
-    [MapResp | parse_allow_subsystems(T, MapAllRoles)].
+-spec parse_allow_subsystems(DbResp :: list(), map(), list()) -> list().
+parse_allow_subsystems([], _MapAllRoles, _SpacesAccess) -> [];
+parse_allow_subsystems([{SubSys, Description} | T], MapAllRoles, SpacesAccess) ->
+    case lists:member(SubSys, SpacesAccess) of
+        true ->
+            #{SubSys := Roles} = MapAllRoles,
+            MapResp = #{<<"subsystem">> => SubSys, <<"roles">> => Roles, <<"description">> => Description},
+            [MapResp | parse_allow_subsystems(T, MapAllRoles, SpacesAccess)];
+        false ->
+            parse_allow_subsystems(T, MapAllRoles, SpacesAccess)
+    end.
+
 
 
 %% ========= add_roles, remove_roles ====== /api/roles/change =========
