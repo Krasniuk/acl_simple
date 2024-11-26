@@ -70,13 +70,37 @@ get login
         }
     }
 
-get roles
+get roles (case authHub)
 
     POST http://127.0.0.1:1913/authorization/roles
     Content-Type: application/json
     sid: fdfdb23a9d4211efb25d18c04d540e8a
     {
         "subsystem": "authHub"
+    }
+
+    - response 200 -
+    {
+    "success": {
+        "space_roles": {
+            "authHub": [
+                "am"
+            ],
+            "testSubsys": [
+                "am"
+            ]
+        },
+        "subsystem": "authHub"
+    }
+    }
+
+get roles (other)
+
+    POST http://127.0.0.1:1913/authorization/roles
+    Content-Type: application/json
+    sid: fdfdb23a9d4211efb25d18c04d540e8a
+    {
+        "subsystem": "mainBroker"
     }
 
     - response 200 -
@@ -551,7 +575,7 @@ delete_subsystem(varchar)
     AS $function$#variable_conflict use_column
         BEGIN
 
-	    DELETE FROM roles WHERE subsystem=subsystem_i;
+	    DELETE FROM roles WHERE space=subsystem_i;
 	    DELETE FROM allow_roles WHERE subsystem=subsystem_i;
 	    DELETE FROM allow_subsystems WHERE subsystem=subsystem_i;
 	    RETURN 'ok';
@@ -560,3 +584,18 @@ delete_subsystem(varchar)
     $function$
     ;
 
+create_subsystem(varchar, varchar)
+
+    CREATE OR REPLACE FUNCTION public.create_subsystem(subsystem_i character varying, description_i character varying)
+        RETURNS character varying
+        LANGUAGE plpgsql
+    AS $function$#variable_conflict use_column
+        BEGIN
+
+	    insert into allow_subsystems (subsystem, description) values (subsystem_i, description_i);
+	    insert into roles (login, role, subsystem, space) values ('admin', 'am', 'authHub', subsystem_i);
+	    RETURN 'ok';
+	
+	    END;
+    $function$
+    ;
