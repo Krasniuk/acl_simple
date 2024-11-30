@@ -1,7 +1,7 @@
 -module(auth_hub_api_allow).
 -author('Mykhailo Krasniuk <miha.190901@gmail.com>').
 
--export([create_subsystems/1, delete_roles/1, create_roles/2, get_allow_roles/1]).
+-export([create_subsystems/1, delete_roles/2, create_roles/2, get_allow_roles/1]).
 -export([delete_subsystems/1]).
 
 -include("auth_hub.hrl").
@@ -105,46 +105,45 @@ create_subsys_handler([MapReq | T], PgPid) ->
 
 %% ========= delete_roles ====== /api/allow/roles/change =========
 
--spec delete_roles(map()) -> {integer(), map()}.
-delete_roles(#{<<"subsys_roles">> := DelRolesMap}) when is_map(DelRolesMap) ->
-    ListSubSys = maps:keys(DelRolesMap),
-    case auth_hub_tools:valid_subsystems(ListSubSys) of
-        true ->
-            try poolboy:checkout(pg_pool, 1000) of
-                full ->
-                    ?LOG_ERROR("No workers in pg_pool", []),
-                    {429, ?RESP_FAIL(<<"too many requests">>)};
-                PgPid ->
-                    Resp = delete_roles_handler(ListSubSys, DelRolesMap, PgPid),
-                    ok = poolboy:checkin(pg_pool, PgPid),
-                    {200, #{<<"results">> => Resp}}
-            catch
-                exit:{timeout, Reason} ->
-                    ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
-                    {429, ?RESP_FAIL(<<"too many requests">>)}
-            end;
-        false ->
-            ?LOG_ERROR("delete_roles invalid subsystems ~p", [ListSubSys]),
-            {422, ?RESP_FAIL(<<"invalid subsystem">>)}
+-spec delete_roles(map(), list()) -> {integer(), map()}.
+delete_roles(#{<<"subsys_roles">> := DelRolesMap}, SpacesAccess) when is_map(DelRolesMap) ->
+    try poolboy:checkout(pg_pool, 1000) of
+        full ->
+            ?LOG_ERROR("No workers in pg_pool", []),
+            {429, ?RESP_FAIL(<<"too many requests">>)};
+        PgPid ->
+            ListSubSys = maps:keys(DelRolesMap),
+            Resp = delete_roles_handler(ListSubSys, DelRolesMap, PgPid, SpacesAccess),
+            ok = poolboy:checkin(pg_pool, PgPid),
+            {200, #{<<"results">> => Resp}}
+    catch
+        exit:{timeout, Reason} ->
+            ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
+            {429, ?RESP_FAIL(<<"too many requests">>)}
     end;
-delete_roles(OtherBody) ->
+delete_roles(OtherBody, _) ->
     ?LOG_ERROR("delete_roles invalid request format ~p", [OtherBody]),
     {422, ?RESP_FAIL(<<"invalid request format">>)}.
 
 
--spec delete_roles_handler(list(), binary(), binary()) -> list().
-delete_roles_handler([], _DelRolesMap, _PgPid) -> [];
-delete_roles_handler([SubSys | T], DelRolesMap, PgPid) ->
+-spec delete_roles_handler(list(), binary(), binary(), list()) -> list().
+delete_roles_handler([], _DelRolesMap, _PgPid, _) -> [];
+delete_roles_handler([SubSys | T], DelRolesMap, PgPid, SpacesAccess) ->
     #{SubSys := ListRoles} = DelRolesMap,
-    case auth_hub_tools:valid_roles(ListRoles) of
-        false ->
+    case {lists:member(SubSys, SpacesAccess), auth_hub_tools:valid_roles(ListRoles)} of
+        {false, _} ->
+            ?LOG_ERROR("delete_roles no access to space ~p", [SubSys]),
+            Resp = #{<<"reason">> => <<"no access to this space">>, <<"success">> => false, <<"subsystem">> => SubSys, <<"roles">> => ListRoles},
+            [Resp | delete_roles_handler(T, DelRolesMap, PgPid, SpacesAccess)];
+        {_, false} ->
             ?LOG_ERROR("delete_roles invalid roles ~p, ~p", [SubSys, ListRoles]),
             Resp = #{<<"reason">> => <<"invalid roles">>, <<"success">> => false, <<"subsystem">> => SubSys, <<"roles">> => ListRoles},
-            [Resp | delete_roles_handler(T, DelRolesMap, PgPid)];
-        true ->
+            [Resp | delete_roles_handler(T, DelRolesMap, PgPid, SpacesAccess)];
+        {true, true} ->
             ListResp = delete_roles_db(ListRoles, SubSys, PgPid),
-            ListResp ++ delete_roles_handler(T, DelRolesMap, PgPid)
+            ListResp ++ delete_roles_handler(T, DelRolesMap, PgPid, SpacesAccess)
     end.
+
 
 -spec delete_roles_db(list(), binary(), binary()) -> list().
 delete_roles_db([], _, _) -> [];

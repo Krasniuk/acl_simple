@@ -175,8 +175,8 @@ handle_method(<<>>, <<"/allow/subsystems/roles/info">>, #{}, SpacesAccess) ->
     auth_hub_api_allow:get_allow_roles(SpacesAccess);
 handle_method(<<"create_roles">>, <<"/allow/roles/change">>, BodyMap, SpacesAccess) ->
     auth_hub_api_allow:create_roles(BodyMap, SpacesAccess);
-handle_method(<<"delete_roles">>, <<"/allow/roles/change">>, BodyMap, _) ->
-    auth_hub_api_allow:delete_roles(BodyMap);
+handle_method(<<"delete_roles">>, <<"/allow/roles/change">>, BodyMap, SpacesAccess) ->
+    auth_hub_api_allow:delete_roles(BodyMap, SpacesAccess);
 handle_method(<<"create_subsystems">>, <<"/allow/subsystems/change">>, BodyMap, _) ->
     auth_hub_api_allow:create_subsystems(BodyMap);
 handle_method(<<"delete_subsystems">>, <<"/allow/subsystems/change">>, BodyMap, _) ->
