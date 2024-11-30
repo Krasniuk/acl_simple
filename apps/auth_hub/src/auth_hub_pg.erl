@@ -27,7 +27,20 @@ get_roles(Login) ->
 
 -spec convert_roles_from_db(list(), map()) -> map().
 convert_roles_from_db([], Result) -> Result;
-convert_roles_from_db([{SubSys, Role}|T], Result) ->
+convert_roles_from_db([{<<"authHub">>, Role, Space}|T], Result) ->
+    case maps:get(<<"authHub">>, Result, undefined) of
+        undefined ->
+            convert_roles_from_db(T, Result#{<<"authHub">> => #{Space => [Role]}});
+        Spaces ->
+            case maps:get(Space, Spaces, undefined) of
+                undefined ->
+                    convert_roles_from_db(T, Result#{<<"authHub">> := Spaces#{Space => [Role]}});
+                Roles ->
+                    Roles1 = Roles ++ [Role],
+                    convert_roles_from_db(T, Result#{<<"authHub">> := Spaces#{Space := Roles1}})
+            end
+    end;
+convert_roles_from_db([{SubSys, Role, _Space}|T], Result) ->
     case maps:get(SubSys, Result, undefined) of
         undefined ->
             convert_roles_from_db(T, Result#{SubSys => [Role]});
@@ -191,17 +204,17 @@ parse(Conn) ->
 
     {ok, _} = epgsql:parse(Conn, "get_passhash", "SELECT passhash FROM users WHERE login=$1", [varchar]),
     {ok, _} = epgsql:parse(Conn, "insert_sid", "INSERT INTO sids (login, sid, ts_end) VALUES ($1, $2, $3)", [varchar, varchar, timestamp]),
-    {ok, _} = epgsql:parse(Conn, "get_roles", "SELECT subsystem, role FROM roles WHERE login=$1", [varchar]),
+    {ok, _} = epgsql:parse(Conn, "get_roles", "SELECT subsystem, role, space FROM roles WHERE login=$1", [varchar]),
     {ok, _} = epgsql:parse(Conn, "update_sid", "UPDATE sids SET sid=$2, ts_end=$3 WHERE login=$1", [varchar, varchar, timestamp]),
     {ok, _} = epgsql:parse(Conn, "delete_user", "SELECT * FROM delete_user($1)", [varchar]),
 
     {ok, _} = epgsql:parse(Conn, "create_user", "INSERT INTO users (login, passhash) VALUES ($1, $2)", [varchar, varchar]),
-    {ok, _} = epgsql:parse(Conn, "get_users_all_info", "SELECT u.login, r.subsystem, r.role FROM roles r RIGHT OUTER JOIN users u ON r.login = u.login", []),
+    {ok, _} = epgsql:parse(Conn, "get_users_all_info", "SELECT u.login, r.subsystem, r.role, r.space FROM roles r RIGHT OUTER JOIN users u ON r.login = u.login", []),
     {ok, _} = epgsql:parse(Conn, "get_allow_roles", "SELECT s.subsystem, r.role, r.description FROM allow_roles r RIGHT OUTER JOIN allow_subsystems s ON r.subsystem = s.subsystem", []),
     {ok, _} = epgsql:parse(Conn, "get_allow_subsystem", "SELECT subsystem, description FROM allow_subsystems", []),
     {ok, _} = epgsql:parse(Conn, "insert_allow_role", "insert into allow_roles (subsystem, role, description) values ($1, $2, $3)", [varchar, varchar, varchar]),
     {ok, _} = epgsql:parse(Conn, "delete_allow_role", "select * from delete_allow_role($1, $2)", [varchar, varchar]),
-    {ok, _} = epgsql:parse(Conn, "insert_allow_subsystem", "insert into allow_subsystems (subsystem, description) values ($1, $2)", [varchar, varchar]),
+    {ok, _} = epgsql:parse(Conn, "insert_allow_subsystem", "SELECT * FROM create_subsystem($1, $2)", [varchar, varchar]),
     {ok, _} = epgsql:parse(Conn, "delete_subsystem", "select * from delete_subsystem($1)", [varchar]),
 
     ok.

@@ -59,6 +59,9 @@ handle_body(Body, RolesMap) ->
         {error, Reason} ->
             ?LOG_ERROR("Decode error, ~p", [Reason]),
             {400, ?RESP_FAIL(<<"invalid request format">>)};
+        {ok, #{<<"subsystem">> := <<"authHub">>}, _} ->
+            RolesList = maps:get(<<"authHub">>, RolesMap, []),
+            {200, ?RESP_SUCCESS_SPACES(<<"authHub">>, RolesList)};
         {ok, #{<<"subsystem">> := SubSys}, _} ->
             case ets:member(subsys_cache, SubSys) of
                 true ->

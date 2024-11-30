@@ -70,13 +70,37 @@ get login
         }
     }
 
-get roles
+get roles (case authHub)
 
     POST http://127.0.0.1:1913/authorization/roles
     Content-Type: application/json
     sid: fdfdb23a9d4211efb25d18c04d540e8a
     {
         "subsystem": "authHub"
+    }
+
+    - response 200 -
+    {
+    "success": {
+        "space_roles": {
+            "authHub": [
+                "am"
+            ],
+            "testSubsys": [
+                "am"
+            ]
+        },
+        "subsystem": "authHub"
+    }
+    }
+
+get roles (other)
+
+    POST http://127.0.0.1:1913/authorization/roles
+    Content-Type: application/json
+    sid: fdfdb23a9d4211efb25d18c04d540e8a
+    {
+        "subsystem": "mainBroker"
     }
 
     - response 200 -
@@ -140,6 +164,7 @@ delete users
     }
 
 get all users info
+(subsystem authHub has spaces "success" -> "info" -> "subsystem_roles" -> "authHub"(subsystem) -> "authHub"(space) -> "am"(role))
 
     GET http://127.0.0.1:1913/api/users/info
     Content-Type: application/json
@@ -147,24 +172,50 @@ get all users info
     
     - response 200 -
     {
-        "success": {
-            "info": [
-                {
-                    "has_active_sid": true,
-                    "login": "admin",
-                    "subsystem_roles": {
-                        "authHub": ["cr", "am"]
-                    }
-                },
-                {
-                    "active_sid": false,
-                    "login": "broker",
-                    "subsystem_roles": {
-                        "mainBroker": ["am"]
-                    }
+    "success": {
+        "info": [
+            {
+                "has_activ_sid": true,
+                "login": "admin",
+                "subsystem_roles": {
+                    "authHub": {
+                        "authHub": [
+                            "am"
+                        ],
+                        "bigBag": [
+                            "am"
+                        ],
+                        "mainBroker": [
+                            "am"
+                        ],
+                        "testSubsys": [
+                            "am"
+                        ]
+                    },
+                    "bigBag": [],
+                    "mainBroker": [],
+                    "testSubsys": []
                 }
-            ]
-        }
+            },
+            {
+                "has_activ_sid": true,
+                "login": "broker",
+                "subsystem_roles": {
+                    "authHub": {
+                        "authHub": [],
+                        "bigBag": [],
+                        "mainBroker": [
+                            "am"
+                        ],
+                        "testSubsys": []
+                    },
+                    "bigBag": [],
+                    "mainBroker": [],
+                    "testSubsys": []
+                }
+            }
+        ]
+    }
     }
 
 get allow subsystems roles
@@ -464,14 +515,28 @@ allow_subsystems
 
 roles
 
-    CREATE TABLE public.roles (
-	    login varchar(50) NOT NULL,
-	    subsystem varchar(10) NOT NULL,
-	    "role" varchar(10) NOT NULL,
-	    CONSTRAINT roles_pkey PRIMARY KEY (login, subsystem, role),
-	    CONSTRAINT const_1 FOREIGN KEY ("role",subsystem) REFERENCES <?>(),
-	    CONSTRAINT const_2 FOREIGN KEY (login) REFERENCES public.users(login)
-    );
+    CREATE TABLE IF NOT EXISTS public.roles
+    (
+        login character varying(50) COLLATE pg_catalog."default" NOT NULL,
+        subsystem character varying(10) COLLATE pg_catalog."default" NOT NULL,
+        role character varying(10) COLLATE pg_catalog."default" NOT NULL,
+        CONSTRAINT roles_pkey PRIMARY KEY (login, subsystem, role),
+        CONSTRAINT const_1 FOREIGN KEY (role, subsystem)
+            REFERENCES public.allow_roles (role, subsystem) MATCH SIMPLE
+            ON UPDATE NO ACTION
+            ON DELETE NO ACTION
+            NOT VALID,
+        CONSTRAINT const_2 FOREIGN KEY (login)
+            REFERENCES public.users (login) MATCH SIMPLE
+            ON UPDATE NO ACTION
+            ON DELETE NO ACTION
+            NOT VALID
+    )
+
+    TABLESPACE pg_default;
+
+    ALTER TABLE IF EXISTS public.roles
+        OWNER to admin;
 
 sids
 
@@ -537,7 +602,7 @@ delete_subsystem(varchar)
     AS $function$#variable_conflict use_column
         BEGIN
 
-	    DELETE FROM roles WHERE subsystem=subsystem_i;
+	    DELETE FROM roles WHERE space=subsystem_i;
 	    DELETE FROM allow_roles WHERE subsystem=subsystem_i;
 	    DELETE FROM allow_subsystems WHERE subsystem=subsystem_i;
 	    RETURN 'ok';
@@ -546,3 +611,18 @@ delete_subsystem(varchar)
     $function$
     ;
 
+create_subsystem(varchar, varchar)
+
+    CREATE OR REPLACE FUNCTION public.create_subsystem(subsystem_i character varying, description_i character varying)
+        RETURNS character varying
+        LANGUAGE plpgsql
+    AS $function$#variable_conflict use_column
+        BEGIN
+
+	    insert into allow_subsystems (subsystem, description) values (subsystem_i, description_i);
+	    insert into roles (login, role, subsystem, space) values ('admin', 'am', 'authHub', subsystem_i);
+	    RETURN 'ok';
+	
+	    END;
+    $function$
+    ;
