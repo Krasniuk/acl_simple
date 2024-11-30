@@ -71,11 +71,12 @@ validation(change_roles, {Login, SubSys, Roles, Space, SpacesAccess}) when is_bi
         true ->
             ValidLogin and ValidRoles and ValidSpace
     end;
-validation(create_subsystems, {SubSys, Desc}) when is_binary(SubSys) and is_binary(Desc) ->
+validation(create_subsystems, {SubSys, Desc, SpacesAccess}) when is_binary(SubSys) and is_binary(Desc) ->
     VSubSys = {match, [{0, byte_size(SubSys)}]} =:= re:run(SubSys, "[a-zA-Z_\\d]{1,50}", []),
     VDesc = {match, [{0, byte_size(Desc)}]} =:= re:run(Desc, "[a-zA-Z-:=+,.()\/@#{}'' \\d]{0,100}", []),
+    VAuth = lists:member(<<"authHub">>, SpacesAccess),
     %?LOG_DEBUG("VSubSys = ~p, VDesc = ~p", [VSubSys, VDesc]),
-    VSubSys and VDesc;
+    VSubSys and VDesc and VAuth;
 validation(create_roles, {SubSys, Role, Desc, SpacesAccess}) when is_binary(SubSys) and is_binary(Role) and is_binary(Desc) ->
     VRole = {match, [{0, byte_size(Role)}]} =:= re:run(Role, "[a-z]{2}", []),
     VDesc = {match, [{0, byte_size(Desc)}]} =:= re:run(Desc, "[a-zA-Z-:=+,.()\/@#{}'' \\d]{0,100}", []),

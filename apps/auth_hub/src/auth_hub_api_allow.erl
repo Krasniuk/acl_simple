@@ -1,67 +1,22 @@
 -module(auth_hub_api_allow).
 -author('Mykhailo Krasniuk <miha.190901@gmail.com>').
 
--export([create_subsystems/1, delete_roles/2, create_roles/2, get_allow_roles/1]).
--export([delete_subsystems/1]).
+-export([create_subsystems/2, delete_roles/2, create_roles/2, get_allow_roles/1]).
+-export([delete_subsystems/2]).
 
 -include("auth_hub.hrl").
 
 
 %% ========= delete_subsystems ====== /api/allow/subsystems/change =========
 
--spec delete_subsystems(map()) -> {integer(), map()}.
-delete_subsystems(#{<<"subsystems">> := Subsystems}) ->
-    case auth_hub_tools:valid_subsystems(Subsystems) of
-        true ->
-            try poolboy:checkout(pg_pool, 1000) of
-                full ->
-                    ?LOG_ERROR("No workers in pg_pool", []),
-                    {429, ?RESP_FAIL(<<"too many requests">>)};
-                PgPid ->
-                    Resp = delete_subsystems(Subsystems, PgPid),
-                    ok = poolboy:checkin(pg_pool, PgPid),
-                    {200, #{<<"results">> => Resp}}
-            catch
-                exit:{timeout, Reason} ->
-                    ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
-                    {429, ?RESP_FAIL(<<"too many requests">>)}
-            end;
-        false ->
-            ?LOG_ERROR("delete_subsystems invalid subsystems ~p", [{Subsystems}]),
-            {422, ?RESP_FAIL(<<"invalid subsystems">>)}
-    end;
-delete_subsystems(OtherBody) ->
-    ?LOG_ERROR("create_subsystems invalid request format ~p", [OtherBody]),
-    {422, ?RESP_FAIL(<<"invalid request format">>)}.
-
--spec delete_subsystems(list(), pid()) -> list().
-delete_subsystems([], _) -> [];
-delete_subsystems([<<"authHub">> | T], PgPid) ->
-    Resp = #{<<"success">> => false, <<"reason">> => <<"root subsystem">>, <<"subsystem">> => <<"authHub">>},
-    [Resp | delete_subsystems(T, PgPid)];
-delete_subsystems([SubSys | T], PgPid) ->
-    case auth_hub_pg:select(PgPid, "delete_subsystem", [SubSys]) of
-        {error, Reason} ->
-            ?LOG_ERROR("create_subsystems db error ~p", [Reason]),
-            Resp = #{<<"success">> => false, <<"reason">> => <<"invalid db response">>, <<"subsystem">> => SubSys},
-            [Resp | delete_subsystems(T, PgPid)];
-        {ok, _, [{<<"ok">>}]} ->
-            Resp = #{<<"success">> => true, <<"subsystem">> => SubSys},
-            true = ets:delete(subsys_cache, SubSys),
-            [Resp | delete_subsystems(T, PgPid)]
-    end.
-
-
-%% ========= create_subsystems ====== /api/allow/subsystems/change =========
-
--spec create_subsystems(map()) -> {integer(), map()}.
-create_subsystems(#{<<"subsystems">> := Subsystems}) when is_list(Subsystems) ->
+-spec delete_subsystems(map(), list()) -> {integer(), map()}.
+delete_subsystems(#{<<"subsystems">> := Subsystems}, SpacesAccess) ->
     try poolboy:checkout(pg_pool, 1000) of
         full ->
             ?LOG_ERROR("No workers in pg_pool", []),
             {429, ?RESP_FAIL(<<"too many requests">>)};
         PgPid ->
-            Resp = create_subsys_handler(Subsystems, PgPid),
+            Resp = delete_subsystems(Subsystems, PgPid, SpacesAccess),
             ok = poolboy:checkin(pg_pool, PgPid),
             {200, #{<<"results">> => Resp}}
     catch
@@ -69,38 +24,85 @@ create_subsystems(#{<<"subsystems">> := Subsystems}) when is_list(Subsystems) ->
             ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
             {429, ?RESP_FAIL(<<"too many requests">>)}
     end;
-create_subsystems(OtherBody) ->
+delete_subsystems(OtherBody, _SpacesAccess) ->
+    ?LOG_ERROR("delete_subsystems invalid request format ~p", [OtherBody]),
+    {422, ?RESP_FAIL(<<"invalid request format">>)}.
+
+-spec delete_subsystems(list(), pid(), list()) -> list().
+delete_subsystems([], _, _) -> [];
+delete_subsystems([<<"authHub">> | T], PgPid, SpacesAccess) ->
+    Resp = #{<<"success">> => false, <<"reason">> => <<"root subsystem">>, <<"subsystem">> => <<"authHub">>},
+    [Resp | delete_subsystems(T, PgPid, SpacesAccess)];
+delete_subsystems([SubSys | T], PgPid, SpacesAccess) ->
+    case lists:member(SubSys, SpacesAccess) of
+        true ->
+            case auth_hub_pg:select(PgPid, "delete_subsystem", [SubSys]) of
+                {error, Reason} ->
+                    ?LOG_ERROR("delete_subsystems db error ~p", [Reason]),
+                    Resp = #{<<"success">> => false, <<"reason">> => <<"invalid db response">>, <<"subsystem">> => SubSys},
+                    [Resp | delete_subsystems(T, PgPid, SpacesAccess)];
+                {ok, _, [{<<"ok">>}]} ->
+                    Resp = #{<<"success">> => true, <<"subsystem">> => SubSys},
+                    true = ets:delete(subsys_cache, SubSys),
+                    [Resp | delete_subsystems(T, PgPid, SpacesAccess)]
+            end;
+        false ->
+            ?LOG_ERROR("delete_subsystems no accept to space ~p", [SubSys]),
+            Resp = #{<<"success">> => false, <<"reason">> => <<"no accept to this space">>, <<"subsystem">> => SubSys},
+            [Resp | delete_subsystems(T, PgPid, SpacesAccess)]
+    end.
+
+
+
+%% ========= create_subsystems ====== /api/allow/subsystems/change =========
+
+-spec create_subsystems(map(), list()) -> {integer(), map()}.
+create_subsystems(#{<<"subsystems">> := Subsystems}, SpacesAccess) when is_list(Subsystems) ->
+    try poolboy:checkout(pg_pool, 1000) of
+        full ->
+            ?LOG_ERROR("No workers in pg_pool", []),
+            {429, ?RESP_FAIL(<<"too many requests">>)};
+        PgPid ->
+            Resp = create_subsys_handler(Subsystems, PgPid, SpacesAccess),
+            ok = poolboy:checkin(pg_pool, PgPid),
+            {200, #{<<"results">> => Resp}}
+    catch
+        exit:{timeout, Reason} ->
+            ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
+            {429, ?RESP_FAIL(<<"too many requests">>)}
+    end;
+create_subsystems(OtherBody, _) ->
     ?LOG_ERROR("create_subsystems invalid request format ~p", [OtherBody]),
     {422, ?RESP_FAIL(<<"invalid request format">>)}.
 
--spec create_subsys_handler(list(), pid()) -> list().
-create_subsys_handler([], _) -> [];
-create_subsys_handler([#{<<"subsystem">> := SubSys, <<"description">> := Desc} | T], PgPid) ->
-    case auth_hub_tools:validation(create_subsystems, {SubSys, Desc}) of
+-spec create_subsys_handler(list(), pid(), list()) -> list().
+create_subsys_handler([], _, _) -> [];
+create_subsys_handler([#{<<"subsystem">> := SubSys, <<"description">> := Desc} | T], PgPid, SpacesAccess) ->
+    case auth_hub_tools:validation(create_subsystems, {SubSys, Desc, SpacesAccess}) of
         true ->
             case auth_hub_pg:select(PgPid, "insert_allow_subsystem", [SubSys, Desc]) of
                 {error, {_, _, _, unique_violation, _, _} = Reason} ->
                     ?LOG_ERROR("create_subsystems user have one of this roles, ~p", [Reason]),
                     Resp = #{<<"success">> => false, <<"reason">> => <<"role exists">>, <<"subsystem">> => SubSys},
-                    [Resp | create_subsys_handler(T, PgPid)];
+                    [Resp | create_subsys_handler(T, PgPid, SpacesAccess)];
                 {error, Reason} ->
                     ?LOG_ERROR("create_subsystems db error ~p", [Reason]),
                     Resp = #{<<"success">> => false, <<"reason">> => <<"invalid db response">>, <<"subsystem">> => SubSys},
-                    [Resp | create_subsys_handler(T, PgPid)];
+                    [Resp | create_subsys_handler(T, PgPid, SpacesAccess)];
                 {ok, _, [{<<"ok">>}]} ->
                     Resp = #{<<"success">> => true, <<"subsystem">> => SubSys},
                     true = ets:insert(subsys_cache, {SubSys}),
-                    [Resp | create_subsys_handler(T, PgPid)]
+                    [Resp | create_subsys_handler(T, PgPid, SpacesAccess)]
             end;
         false ->
             ?LOG_ERROR("create_subsystems invalid params ~p", [{SubSys, Desc}]),
             Resp = #{<<"success">> => false, <<"reason">> => <<"invalid params">>, <<"subsystem">> => SubSys},
-            [Resp | create_subsys_handler(T, PgPid)]
+            [Resp | create_subsys_handler(T, PgPid, SpacesAccess)]
     end;
-create_subsys_handler([MapReq | T], PgPid) ->
+create_subsys_handler([MapReq | T], PgPid, SpacesAccess) ->
     ?LOG_ERROR("create_subsystems absent needed params, ~p", [MapReq]),
     MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"absent needed params">>},
-    [MapResp | create_subsys_handler(T, PgPid)].
+    [MapResp | create_subsys_handler(T, PgPid, SpacesAccess)].
 
 
 %% ========= delete_roles ====== /api/allow/roles/change =========

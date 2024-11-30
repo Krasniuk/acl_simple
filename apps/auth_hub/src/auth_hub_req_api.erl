@@ -177,10 +177,10 @@ handle_method(<<"create_roles">>, <<"/allow/roles/change">>, BodyMap, SpacesAcce
     auth_hub_api_allow:create_roles(BodyMap, SpacesAccess);
 handle_method(<<"delete_roles">>, <<"/allow/roles/change">>, BodyMap, SpacesAccess) ->
     auth_hub_api_allow:delete_roles(BodyMap, SpacesAccess);
-handle_method(<<"create_subsystems">>, <<"/allow/subsystems/change">>, BodyMap, _) ->
-    auth_hub_api_allow:create_subsystems(BodyMap);
-handle_method(<<"delete_subsystems">>, <<"/allow/subsystems/change">>, BodyMap, _) ->
-    auth_hub_api_allow:delete_subsystems(BodyMap);
+handle_method(<<"create_subsystems">>, <<"/allow/subsystems/change">>, BodyMap, SpacesAccess) ->
+    auth_hub_api_allow:create_subsystems(BodyMap, SpacesAccess);
+handle_method(<<"delete_subsystems">>, <<"/allow/subsystems/change">>, BodyMap, SpacesAccess) ->
+    auth_hub_api_allow:delete_subsystems(BodyMap, SpacesAccess);
 handle_method(Method, Url, OtherBody, _) ->
     ?LOG_ERROR("Invalid request format ~p, ~p, ~p", [Method, Url, OtherBody]),
     {422, ?RESP_FAIL(<<"invalid request format">>)}.
