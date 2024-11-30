@@ -422,16 +422,22 @@ generate_insert_sql(second, [Role | T], Login, Subsys, Space, Sql) ->
 -spec remove_roles_handler(list(), list()) -> list().
 remove_roles_handler([], _SpacesAccess) -> [];
 remove_roles_handler([#{<<"login">> := Login, <<"subsystem">> := <<"authHub">>, <<"roles">> := Roles, <<"space">> := Space} = MapReq | T], SpacesAccess) ->
-    case auth_hub_tools:validation(change_roles, {Login, <<"authHub">>, Roles, Space, SpacesAccess}) of
-        no_access ->
+    ValidParam = auth_hub_tools:validation(change_roles, {Login, <<"authHub">>, Roles, Space, SpacesAccess}),
+    RootCase = not_delete_root_role(<<"authHub">>, Login, Roles, Space),
+    case {ValidParam, RootCase} of
+        {_, false} ->
+            ?LOG_ERROR("remove_roles_handler try delete root role of root ligin", []),
+            MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"root role, root login">>},
+            [MapResp | handler_add_roles(T, SpacesAccess)];
+        {no_access, _} ->
             ?LOG_ERROR("remove_roles_handler no access to space ~p", [<<"authHub">>]),
             MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"no access to this space">>},
             [MapResp | handler_add_roles(T, SpacesAccess)];
-        false ->
+        {false, _} ->
             ?LOG_ERROR("remove_roles_handler invalid params value", []),
             MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"invalid params value">>},
             [MapResp | remove_roles_handler(T, SpacesAccess)];
-        true ->
+        {true, true} ->
             LoginStr = binary_to_list(Login),
             SpaceStr = binary_to_list(Space),
             case generate_delete_sql(first, Roles, ?SQL_DELETE_ROLES(LoginStr, "authHub", SpaceStr), {Login, <<"authHub">>, Space}) of
@@ -489,6 +495,13 @@ remove_roles_handler([MapReq | T], SpacesAccess) ->
     ?LOG_ERROR("remove_roles_handler absent needed params ~p", [MapReq]),
     MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"absent needed params">>},
     [MapResp | remove_roles_handler(T, SpacesAccess)].
+
+
+-spec not_delete_root_role(binary(), binary(), list(), binary()) -> boolean().
+not_delete_root_role(<<"authHub">>, <<"admin">>, Roles, <<"authHub">>) ->
+    not(lists:member(<<"am">>, Roles));
+not_delete_root_role(_, _, _, _) ->
+    true.
 
 
 -spec generate_delete_sql(first | second, list(), string(), {binary(), binary(), binary()}) -> string() | null | admin_error.
