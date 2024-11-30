@@ -1,7 +1,7 @@
 -module(auth_hub_api_allow).
 -author('Mykhailo Krasniuk <miha.190901@gmail.com>').
 
--export([create_subsystems/1, delete_roles/1, create_roles/1, get_allow_roles/1]).
+-export([create_subsystems/1, delete_roles/1, create_roles/2, get_allow_roles/1]).
 -export([delete_subsystems/1]).
 
 -include("auth_hub.hrl").
@@ -165,14 +165,14 @@ delete_roles_db([Role | T], SubSys, PgPid) ->
 
 %% ========= create_roles ====== /api/allow/roles/change =========
 
--spec create_roles(map()) -> {integer(), map()}.
-create_roles(#{<<"roles">> := RolesList}) when is_list(RolesList) ->
+-spec create_roles(map(), list()) -> {integer(), map()}.
+create_roles(#{<<"roles">> := RolesList}, SpacesAccess) when is_list(RolesList) ->
     try poolboy:checkout(pg_pool, 1000) of
         full ->
             ?LOG_ERROR("No workers in pg_pool", []),
             {429, ?RESP_FAIL(<<"too many requests">>)};
         PgPid ->
-            Resp = create_roles_handler(RolesList, PgPid),
+            Resp = create_roles_handler(RolesList, PgPid, SpacesAccess),
             ok = poolboy:checkin(pg_pool, PgPid),
             {200, #{<<"results">> => Resp}}
     catch
@@ -180,41 +180,46 @@ create_roles(#{<<"roles">> := RolesList}) when is_list(RolesList) ->
             ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
             {429, ?RESP_FAIL(<<"too many requests">>)}
     end;
-create_roles(OtherBody) ->
+create_roles(OtherBody, _) ->
     ?LOG_ERROR("create_roles invalid request format ~p", [OtherBody]),
     {422, ?RESP_FAIL(<<"invalid request format">>)}.
 
 
--spec create_roles_handler(list(), pid()) -> list().
-create_roles_handler([], _) -> [];
-create_roles_handler([#{<<"role">> := Role, <<"subsystem">> := SubSys, <<"description">> := Desc} | T], PgPid) ->
-    case auth_hub_tools:validation(create_roles, {SubSys, Role, Desc}) of
+-spec create_roles_handler(list(), pid(), list()) -> list().
+create_roles_handler([], _, _) -> [];
+create_roles_handler([#{<<"role">> := Role, <<"subsystem">> := SubSys, <<"description">> := Desc} | T], PgPid, SpacesAccess) ->
+    case auth_hub_tools:validation(create_roles, {SubSys, Role, Desc, SpacesAccess}) of
         true ->
             case auth_hub_pg:insert(PgPid, "insert_allow_role", [SubSys, Role, Desc]) of
                 {error, {_, _, _, unique_violation, _, _} = Reason} ->
                     ?LOG_ERROR("create_roles user have one of this roles, ~p", [Reason]),
                     Resp = #{<<"success">> => false, <<"reason">> => <<"subsystem exists">>,
                         <<"role">> => Role, <<"subsystem">> => SubSys},
-                    [Resp | create_roles_handler(T, PgPid)];
+                    [Resp | create_roles_handler(T, PgPid, SpacesAccess)];
                 {error, Reason} ->
-                    ?LOG_ERROR("create_roles db error ~p", [Reason]),
+                    ?LOG_ERROR("create_roles_handler db error ~p", [Reason]),
                     Resp = #{<<"success">> => false, <<"reason">> => <<"invalid db response">>,
                         <<"role">> => Role, <<"subsystem">> => SubSys},
-                    [Resp | create_roles_handler(T, PgPid)];
+                    [Resp | create_roles_handler(T, PgPid, SpacesAccess)];
                 {ok, 1} ->
                     Resp = #{<<"success">> => true, <<"role">> => Role, <<"subsystem">> => SubSys},
-                    [Resp | create_roles_handler(T, PgPid)]
+                    [Resp | create_roles_handler(T, PgPid, SpacesAccess)]
             end;
+        no_access ->
+            ?LOG_ERROR("create_roles_handler no access to space ~p", [{SubSys}]),
+            Resp = #{<<"success">> => false, <<"reason">> => <<"no access to this space">>,
+                <<"role">> => Role, <<"subsystem">> => SubSys},
+            [Resp | create_roles_handler(T, PgPid, SpacesAccess)];
         false ->
-            ?LOG_ERROR("create_roles invalid params ~p", [{Role, SubSys, Desc}]),
+            ?LOG_ERROR("create_roles_handler invalid params ~p", [{Role, SubSys, Desc}]),
             Resp = #{<<"success">> => false, <<"reason">> => <<"invalid params">>,
                 <<"role">> => Role, <<"subsystem">> => SubSys},
-            [Resp | create_roles_handler(T, PgPid)]
+            [Resp | create_roles_handler(T, PgPid, SpacesAccess)]
     end;
-create_roles_handler([MapReq | T], PgPid) ->
-    ?LOG_ERROR("create_roles absent needed params ~p", [MapReq]),
+create_roles_handler([MapReq | T], PgPid, SpacesAccess) ->
+    ?LOG_ERROR("create_roles_handler absent needed params ~p", [MapReq]),
     MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"absent needed params">>},
-    [MapResp | create_roles_handler(T, PgPid)].
+    [MapResp | create_roles_handler(T, PgPid, SpacesAccess)].
 
 
 %% ========= get_allow_roles ====== /api/roles/allow/info =========

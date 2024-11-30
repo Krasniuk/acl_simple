@@ -76,11 +76,15 @@ validation(create_subsystems, {SubSys, Desc}) when is_binary(SubSys) and is_bina
     VDesc = {match, [{0, byte_size(Desc)}]} =:= re:run(Desc, "[a-zA-Z-:=+,.()\/@#{}'' \\d]{0,100}", []),
     %?LOG_DEBUG("VSubSys = ~p, VDesc = ~p", [VSubSys, VDesc]),
     VSubSys and VDesc;
-validation(create_roles, {SubSys, Role, Desc}) when is_binary(SubSys) and is_binary(Role) and is_binary(Desc) ->
-    VSubSys = ets:member(subsys_cache, SubSys),
+validation(create_roles, {SubSys, Role, Desc, SpacesAccess}) when is_binary(SubSys) and is_binary(Role) and is_binary(Desc) ->
     VRole = {match, [{0, byte_size(Role)}]} =:= re:run(Role, "[a-z]{2}", []),
     VDesc = {match, [{0, byte_size(Desc)}]} =:= re:run(Desc, "[a-zA-Z-:=+,.()\/@#{}'' \\d]{0,100}", []),
-    VSubSys and VRole and VDesc;
+    case lists:member(SubSys, SpacesAccess) of
+        false ->
+            no_access;
+        true ->
+            VRole and VDesc
+    end;
 validation(_, _) ->
     false.
 
