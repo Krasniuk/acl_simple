@@ -55,16 +55,22 @@ check_roles([Role|T], PermitRoles) ->
     end.
 
 
--spec validation(atom(), tuple()) -> boolean().
+-spec validation(atom(), tuple()) -> boolean() | no_access.
 validation(create_users, {Login, Pass}) when is_binary(Pass) and is_binary(Login) ->
     ValidLogin = valid_login(Login),
     ValidPass = {match, [{0, byte_size(Pass)}]} =:= re:run(Pass, "[a-zA-Z_\\d-#&$%]{8,100}", []),
     ValidPass and ValidLogin;
-validation(change_roles, {Login, SubSys, Roles}) when is_binary(SubSys) and is_list(Roles) and is_binary(Login) ->
-    ValidSubSys = ets:member(subsys_cache, SubSys),
+validation(change_roles, {Login, SubSys, Roles, Space, SpacesAccess}) when is_binary(SubSys) and
+        is_list(Roles) and is_binary(Login) and is_binary(Space) ->
+    ValidSpace = ets:member(subsys_cache, Space),
     ValidRoles = valid_roles(Roles),
     ValidLogin = valid_login(Login),
-    ValidSubSys and ValidLogin and ValidRoles;
+    case lists:member(SubSys, SpacesAccess) of
+        false ->
+            no_access;
+        true ->
+            ValidLogin and ValidRoles and ValidSpace
+    end;
 validation(create_subsystems, {SubSys, Desc}) when is_binary(SubSys) and is_binary(Desc) ->
     VSubSys = {match, [{0, byte_size(SubSys)}]} =:= re:run(SubSys, "[a-zA-Z_\\d]{1,50}", []),
     VDesc = {match, [{0, byte_size(Desc)}]} =:= re:run(Desc, "[a-zA-Z-:=+,.()\/@#{}'' \\d]{0,100}", []),

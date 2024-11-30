@@ -143,8 +143,34 @@ handle_method(<<>>, <<"/users/info">>, #{}, SpacesAccess) ->
             ListResp = construct_response(Logins, UsersMap),
             {200, ?RESP_SUCCESS(ListResp)}
     end;
-handle_method(Method, <<"/roles/change">>, BodyMap, _) ->
-    auth_hub_api_allow:change_roles(Method, BodyMap);
+handle_method(<<"add_roles">>, <<"/roles/change">>, #{<<"changes">> := ListOperations}, SpacesAccess) when is_list(ListOperations) ->
+    try poolboy:checkout(pg_pool, 1000) of
+        full ->
+            ?LOG_ERROR("No workers in pg_pool", []),
+            {429, ?RESP_FAIL(<<"too many requests">>)};
+        WorkerPid ->
+            Reply = handler_add_roles(ListOperations, SpacesAccess),
+            ok = poolboy:checkin(pg_pool, WorkerPid),
+            {200, #{<<"results">> => Reply}}
+    catch
+        exit:{timeout, Reason} ->
+            ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
+            {429, ?RESP_FAIL(<<"too many requests">>)}
+    end;
+handle_method(<<"remove_roles">>, <<"/roles/change">>, #{<<"changes">> := ListOperations}, SpacesAccess) when is_list(ListOperations) ->
+    try poolboy:checkout(pg_pool, 1000) of
+        full ->
+            ?LOG_ERROR("No workers in pg_pool", []),
+            {429, ?RESP_FAIL(<<"too many requests">>)};
+        WorkerPid ->
+            Reply = remove_roles_handler(ListOperations, SpacesAccess),
+            ok = poolboy:checkin(pg_pool, WorkerPid),
+            {200, #{<<"results">> => Reply}}
+    catch
+        exit:{timeout, Reason} ->
+            ?LOG_ERROR("No workers in pg_pool ~p", [Reason]),
+            {429, ?RESP_FAIL(<<"too many requests">>)}
+    end;
 handle_method(<<>>, <<"/allow/subsystems/roles/info">>, #{}, SpacesAccess) ->
     auth_hub_api_allow:get_allow_roles(SpacesAccess);
 handle_method(<<"create_roles">>, <<"/allow/roles/change">>, BodyMap, _) ->
@@ -309,3 +335,165 @@ ets_delete_sid(Login) ->
             ok
     end,
     ok.
+
+
+%% ========= add_roles ====== /api/roles/change =========
+
+-spec handler_add_roles(list(), list()) -> list().
+handler_add_roles([], _SpacesAccess) -> [];
+handler_add_roles([#{<<"login">> := Login, <<"subsystem">> := <<"authHub">>, <<"roles">> := Roles, <<"space">> := Space} = MapReq | T], SpacesAccess) ->
+    case auth_hub_tools:validation(change_roles, {Login, <<"authHub">>, Roles, Space, SpacesAccess}) of
+        false ->
+            ?LOG_ERROR("handler_add_roles invalid params value", []),
+            MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"invalid params value">>},
+            [MapResp | handler_add_roles(T, SpacesAccess)];
+        true ->
+            case generate_insert_sql(first, Roles, Login, <<"authHub">>, Space, ?SQL_INSERT_ROLES) of
+                null ->
+                    MapResp = MapReq#{<<"success">> => true},
+                    [MapResp | handler_add_roles(T, SpacesAccess)];
+                Sql ->
+                    MapResp = insert_role_to_db(Sql, MapReq),
+                    [MapResp | handler_add_roles(T, SpacesAccess)]
+            end
+    end;
+handler_add_roles([#{<<"login">> := Login, <<"subsystem">> := SubSys, <<"roles">> := Roles} = MapReq | T], SpacesAccess) when SubSys =/= <<"authHub">> ->
+    case auth_hub_tools:validation(change_roles, {Login, SubSys, Roles, SubSys, SpacesAccess}) of
+        no_access ->
+            ?LOG_ERROR("handler_add_roles invalid params value", []),
+            MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"no access to this space">>},
+            [MapResp | handler_add_roles(T, SpacesAccess)];
+        false ->
+            ?LOG_ERROR("handler_add_roles invalid params value", []),
+            MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"invalid params value">>},
+            [MapResp | handler_add_roles(T, SpacesAccess)];
+        true ->
+            case generate_insert_sql(first, Roles, Login, SubSys, SubSys, ?SQL_INSERT_ROLES) of
+                null ->
+                    MapResp = MapReq#{<<"success">> => true},
+                    [MapResp | handler_add_roles(T, SpacesAccess)];
+                Sql ->
+                    MapResp = insert_role_to_db(Sql, MapReq),
+                    [MapResp | handler_add_roles(T, SpacesAccess)]
+            end
+    end;
+handler_add_roles([MapReq | T], SpacesAccess) ->
+    ?LOG_ERROR("handler_add_roles absent needed params, ~p", [MapReq]),
+    MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"absent needed params">>},
+    [MapResp | handler_add_roles(T, SpacesAccess)].
+
+-spec insert_role_to_db(string(), map()) -> map().
+insert_role_to_db(Sql, MapReq) ->
+    case auth_hub_pg:sql_req_not_prepared(Sql, []) of
+        {error, {_, _, _, unique_violation, _, _} = Reason} ->
+            ?LOG_ERROR("handler_change_roles user have one of this roles, ~p", [Reason]),
+            MapReq#{<<"success">> => false, <<"reason">> => <<"user have one of this roles">>};
+        {error, {_, _, _, foreign_key_violation, _, _} = Reason} ->
+            ?LOG_ERROR("handler_change_roles invalid login, ~p", [Reason]),
+            MapReq#{<<"success">> => false, <<"reason">> => <<"invalid params value">>};
+        {error, Reason} ->
+            ?LOG_ERROR("handler_change_roles db error ~p", [Reason]),
+            MapReq#{<<"success">> => false, <<"reason">> => <<"invalid db resp">>};
+        {ok, _Count} ->
+            MapReq#{<<"success">> => true}
+    end.
+
+-spec generate_insert_sql(first | second, list(), binary(), binary(), binary(), string()) -> string() | null.
+generate_insert_sql(first, [], _Login, _Subsys, _Space, _Sql) -> null;
+generate_insert_sql(second, [], _Login, _Subsys, _Space, Sql) ->
+    ?LOG_DEBUG("Insert roles sql ~p", [Sql ++ ")"]),
+    Sql;
+generate_insert_sql(first, [Role | T], Login, Subsys, Space, Sql) ->
+    Sql1 = Sql ++ "('" ++ binary_to_list(Login) ++ "', '" ++
+        binary_to_list(Subsys) ++ "', '" ++ binary_to_list(Role) ++  "', '" ++ binary_to_list(Space) ++ "')",
+    generate_insert_sql(second, T, Login, Subsys, Space, Sql1);
+generate_insert_sql(second, [Role | T], Login, Subsys, Space, Sql) ->
+    Sql1 = Sql ++ ", ('" ++ binary_to_list(Login) ++ "', '" ++
+        binary_to_list(Subsys) ++ "', '" ++ binary_to_list(Role) ++  "', '" ++ binary_to_list(Space) ++ "')",
+    generate_insert_sql(second, T, Login, Subsys, Space, Sql1).
+
+
+%% ========= remove_roles ====== /api/roles/change =========
+
+-spec remove_roles_handler(list(), list()) -> list().
+remove_roles_handler([], _SpacesAccess) -> [];
+remove_roles_handler([#{<<"login">> := Login, <<"subsystem">> := <<"authHub">>, <<"roles">> := Roles, <<"space">> := Space} = MapReq | T], SpacesAccess) ->
+    case auth_hub_tools:validation(change_roles, {Login, <<"authHub">>, Roles, Space, SpacesAccess}) of
+        no_access ->
+            ?LOG_ERROR("handler_add_roles invalid params value", []),
+            MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"no access to this space">>},
+            [MapResp | handler_add_roles(T, SpacesAccess)];
+        false ->
+            ?LOG_ERROR("remove_roles_handler invalid params value", []),
+            MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"invalid params value">>},
+            [MapResp | remove_roles_handler(T, SpacesAccess)];
+        true ->
+            LoginStr = binary_to_list(Login),
+            SpaceStr = binary_to_list(Space),
+            case generate_delete_sql(first, Roles, ?SQL_DELETE_ROLES(LoginStr, "authHub", SpaceStr), {Login, <<"authHub">>, Space}) of
+                null ->
+                    MapResp = MapReq#{<<"success">> => true},
+                    [MapResp | remove_roles_handler(T, SpacesAccess)];
+                admin_error ->
+                    MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"root role 'am'">>},
+                    [MapResp | remove_roles_handler(T, SpacesAccess)];
+                Sql ->
+                    case auth_hub_pg:sql_req_not_prepared(Sql, []) of
+                        {error, Reason} ->
+                            ?LOG_ERROR("remove_roles_handler db error ~p", [Reason]),
+                            MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"invalid db resp">>},
+                            [MapResp | remove_roles_handler(T, SpacesAccess)];
+                        {ok, _Count} ->
+                            MapResp = MapReq#{<<"success">> => true},
+                            [MapResp | remove_roles_handler(T, SpacesAccess)]
+                    end
+            end
+    end;
+remove_roles_handler([#{<<"login">> := Login, <<"subsystem">> := SubSys, <<"roles">> := Roles} = MapReq | T], SpacesAccess) when SubSys =/= <<"authHub">>->
+    case auth_hub_tools:validation(change_roles, {Login, SubSys, Roles, SubSys, SpacesAccess}) of
+        false ->
+            ?LOG_ERROR("remove_roles_handler invalid params value", []),
+            MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"invalid params value">>},
+            [MapResp | remove_roles_handler(T, SpacesAccess)];
+        true ->
+            LoginStr = binary_to_list(Login),
+            SubSysStr = binary_to_list(SubSys),
+            case generate_delete_sql(first, Roles, ?SQL_DELETE_ROLES(LoginStr, SubSysStr, SubSysStr), {Login, SubSys, SubSys}) of
+                null ->
+                    MapResp = MapReq#{<<"success">> => true},
+                    [MapResp | remove_roles_handler(T, SpacesAccess)];
+                admin_error ->
+                    MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"root role 'am'">>},
+                    [MapResp | remove_roles_handler(T, SpacesAccess)];
+                Sql ->
+                    case auth_hub_pg:sql_req_not_prepared(Sql, []) of
+                        {error, Reason} ->
+                            ?LOG_ERROR("remove_roles_handler db error ~p", [Reason]),
+                            MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"invalid db resp">>},
+                            [MapResp | remove_roles_handler(T, SpacesAccess)];
+                        {ok, _Count} ->
+                            MapResp = MapReq#{<<"success">> => true},
+                            [MapResp | remove_roles_handler(T, SpacesAccess)]
+                    end
+            end
+    end;
+remove_roles_handler([MapReq | T], SpacesAccess) ->
+    ?LOG_ERROR("remove_roles_handler absent needed params ~p", [MapReq]),
+    MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"absent needed params">>},
+    [MapResp | remove_roles_handler(T, SpacesAccess)].
+
+
+-spec generate_delete_sql(first | second, list(), string(), {binary(), binary(), binary()}) -> string() | null | admin_error.
+generate_delete_sql(first, [], _Sql, _AdminCase) -> null;
+generate_delete_sql(_FirstFlag, [<<"am">> | _T], _Sql, {<<"admin">>, <<"authHub">>, <<"authHub">>}) ->
+    admin_error;
+generate_delete_sql(second, [], Sql, _AdminCase) ->
+    ?LOG_DEBUG("Delete roles sql ~p", [Sql ++ ")"]),
+    Sql ++ ")";
+generate_delete_sql(first, [Role | T], Sql, AdminCase) ->
+    Sql1 = Sql ++ "role='" ++ binary_to_list(Role) ++ "'",
+    generate_delete_sql(second, T, Sql1, AdminCase);
+generate_delete_sql(second, [Role | T], Sql, AdminCase) ->
+    Sql1 = Sql ++ " or role='" ++ binary_to_list(Role) ++ "'",
+    generate_delete_sql(second, T, Sql1, AdminCase).
+
