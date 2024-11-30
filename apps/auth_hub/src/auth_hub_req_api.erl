@@ -343,6 +343,10 @@ ets_delete_sid(Login) ->
 handler_add_roles([], _SpacesAccess) -> [];
 handler_add_roles([#{<<"login">> := Login, <<"subsystem">> := <<"authHub">>, <<"roles">> := Roles, <<"space">> := Space} = MapReq | T], SpacesAccess) ->
     case auth_hub_tools:validation(change_roles, {Login, <<"authHub">>, Roles, Space, SpacesAccess}) of
+        no_access ->
+            ?LOG_ERROR("handler_add_roles no access to space ~p", [<<"authHub">>]),
+            MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"no access to this space">>},
+            [MapResp | handler_add_roles(T, SpacesAccess)];
         false ->
             ?LOG_ERROR("handler_add_roles invalid params value", []),
             MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"invalid params value">>},
@@ -360,7 +364,7 @@ handler_add_roles([#{<<"login">> := Login, <<"subsystem">> := <<"authHub">>, <<"
 handler_add_roles([#{<<"login">> := Login, <<"subsystem">> := SubSys, <<"roles">> := Roles} = MapReq | T], SpacesAccess) when SubSys =/= <<"authHub">> ->
     case auth_hub_tools:validation(change_roles, {Login, SubSys, Roles, SubSys, SpacesAccess}) of
         no_access ->
-            ?LOG_ERROR("handler_add_roles invalid params value", []),
+            ?LOG_ERROR("handler_add_roles no access to space ~p", [SubSys]),
             MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"no access to this space">>},
             [MapResp | handler_add_roles(T, SpacesAccess)];
         false ->
@@ -420,7 +424,7 @@ remove_roles_handler([], _SpacesAccess) -> [];
 remove_roles_handler([#{<<"login">> := Login, <<"subsystem">> := <<"authHub">>, <<"roles">> := Roles, <<"space">> := Space} = MapReq | T], SpacesAccess) ->
     case auth_hub_tools:validation(change_roles, {Login, <<"authHub">>, Roles, Space, SpacesAccess}) of
         no_access ->
-            ?LOG_ERROR("handler_add_roles invalid params value", []),
+            ?LOG_ERROR("remove_roles_handler no access to space ~p", [<<"authHub">>]),
             MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"no access to this space">>},
             [MapResp | handler_add_roles(T, SpacesAccess)];
         false ->
@@ -451,6 +455,10 @@ remove_roles_handler([#{<<"login">> := Login, <<"subsystem">> := <<"authHub">>, 
     end;
 remove_roles_handler([#{<<"login">> := Login, <<"subsystem">> := SubSys, <<"roles">> := Roles} = MapReq | T], SpacesAccess) when SubSys =/= <<"authHub">>->
     case auth_hub_tools:validation(change_roles, {Login, SubSys, Roles, SubSys, SpacesAccess}) of
+        no_access ->
+            ?LOG_ERROR("remove_roles_handler no access to space ~p", [SubSys]),
+            MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"no access to this space">>},
+            [MapResp | handler_add_roles(T, SpacesAccess)];
         false ->
             ?LOG_ERROR("remove_roles_handler invalid params value", []),
             MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"invalid params value">>},
