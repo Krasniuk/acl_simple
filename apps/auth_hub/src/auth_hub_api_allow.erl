@@ -53,7 +53,6 @@ delete_subsystems([SubSys | T], PgPid, SpacesAccess) ->
     end.
 
 
-
 %% ========= create_subsystems ====== /api/allow/subsystems/change =========
 
 -spec create_subsystems(map(), list()) -> {integer(), map()}.
@@ -83,7 +82,7 @@ create_subsys_handler([#{<<"subsystem">> := SubSys, <<"description">> := Desc} |
             case auth_hub_pg:select(PgPid, "insert_allow_subsystem", [SubSys, Desc]) of
                 {error, {_, _, _, unique_violation, _, _} = Reason} ->
                     ?LOG_ERROR("create_subsystems user have one of this roles, ~p", [Reason]),
-                    Resp = #{<<"success">> => false, <<"reason">> => <<"role exists">>, <<"subsystem">> => SubSys},
+                    Resp = #{<<"success">> => false, <<"reason">> => <<"subsystem exists">>, <<"subsystem">> => SubSys},
                     [Resp | create_subsys_handler(T, PgPid, SpacesAccess)];
                 {error, Reason} ->
                     ?LOG_ERROR("create_subsystems db error ~p", [Reason]),
@@ -92,6 +91,7 @@ create_subsys_handler([#{<<"subsystem">> := SubSys, <<"description">> := Desc} |
                 {ok, _, [{<<"ok">>}]} ->
                     Resp = #{<<"success">> => true, <<"subsystem">> => SubSys},
                     true = ets:insert(subsys_cache, {SubSys}),
+                    ok = insert_subsys_in_admin_sids_cache(SubSys),
                     [Resp | create_subsys_handler(T, PgPid, SpacesAccess)]
             end;
         false ->
@@ -104,6 +104,24 @@ create_subsys_handler([MapReq | T], PgPid, SpacesAccess) ->
     MapResp = MapReq#{<<"success">> => false, <<"reason">> => <<"absent needed params">>},
     [MapResp | create_subsys_handler(T, PgPid, SpacesAccess)].
 
+-spec insert_subsys_in_admin_sids_cache(binary()) -> ok.
+insert_subsys_in_admin_sids_cache(SubSys) ->
+    SidCache = ets:select(sids_cache, [{
+        {'$1', '$2', '$3', '$4'},
+        [{'=:=', '$2', <<"admin">>}],
+        ['$1']
+    }]),
+    case SidCache of
+        [] ->
+            ok;
+        [Sid] ->
+            [{Sid, Login, RolesMap, DateEnd}] = ets:tab2list(sids_cache),
+            #{<<"authHub">> := RolesSpaces} = RolesMap,
+            RolesSpaces1 = RolesSpaces#{SubSys => [<<"am">>]},
+            RolesMap1 = RolesMap#{<<"authHub">> := RolesSpaces1},
+            true = ets:insert(sids_cache, {Sid, Login, RolesMap1, DateEnd}),
+            ok
+    end.
 
 %% ========= delete_roles ====== /api/allow/roles/change =========
 

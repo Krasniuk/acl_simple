@@ -95,10 +95,10 @@ handle_auth(_, _, RolesMap, _) ->
 get_access_spaces([], _SpacesMap, _PermitRoles) -> [];
 get_access_spaces([Space | T], SpacesMap, PermitRoles) ->
     #{Space := Roles} = SpacesMap,
-    case auth_hub_tools:check_roles(Roles, PermitRoles) of
-        true ->
+    case {auth_hub_tools:check_roles(Roles, PermitRoles), ets:member(subsys_cache, Space)} of
+        {true, true} ->
             [Space | get_access_spaces(T, SpacesMap, PermitRoles)];
-        false ->
+        {_, _} ->
             get_access_spaces(T, SpacesMap, PermitRoles)
     end.
 
