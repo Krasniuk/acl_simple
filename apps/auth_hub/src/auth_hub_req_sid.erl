@@ -58,7 +58,7 @@ get_session(Login, PassWord) ->
         {ok, _, [{PermitHash}]} ->
             [{salt, Salt}] = ets:lookup(opts, salt),
             SaltBin = list_to_binary(Salt),
-            PassHash = io_lib:format("~64.16.0b", [binary:decode_unsigned(crypto:hash(sha256, <<PassWord/binary, SaltBin/binary>>))]),
+            PassHash = io_lib:format("~64.16.0b", [binary:decode_unsigned(crypto:pbkdf2_hmac(sha256, PassWord, SaltBin, 4000, 32))]),
             case binary_to_list(PermitHash) =:= PassHash of
                 true ->
                     Ts = calendar:local_time(),

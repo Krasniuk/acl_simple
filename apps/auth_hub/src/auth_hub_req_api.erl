@@ -278,7 +278,7 @@ create_users([#{<<"login">> := Login, <<"pass">> := Pass} | T], PgPid) ->
         true ->
             [{salt, Salt}] = ets:lookup(opts, salt),
             SaltBin = list_to_binary(Salt),
-            PassHash = io_lib:format("~64.16.0b", [binary:decode_unsigned(crypto:hash(sha256, <<Pass/binary, SaltBin/binary>>))]),
+            PassHash = io_lib:format("~64.16.0b", [binary:decode_unsigned(crypto:pbkdf2_hmac(sha256, Pass, SaltBin, 4000, 32))]),
             case auth_hub_pg:insert(PgPid, "create_user", [Login, PassHash]) of
                 {error, {_, _, _, unique_violation, _, [{constraint_name, <<"unique_pass">>} | _]} = Reason} ->
                     ?LOG_ERROR("create_users incorrect pass ~p", [Reason]),
