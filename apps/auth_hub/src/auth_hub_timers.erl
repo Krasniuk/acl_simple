@@ -11,6 +11,7 @@
 % Users functions
 % ====================================================
 
+-spec start_link() -> {ok, pid()} | term().
 start_link() ->
     gen_server:start_link(?MODULE, [], []).
 

@@ -95,10 +95,10 @@ handle_auth(_, _, RolesMap, _) ->
 get_access_spaces([], _SpacesMap, _PermitRoles) -> [];
 get_access_spaces([Space | T], SpacesMap, PermitRoles) ->
     #{Space := Roles} = SpacesMap,
-    case auth_hub_tools:check_roles(Roles, PermitRoles) of
-        true ->
+    case {auth_hub_tools:check_roles(Roles, PermitRoles), ets:member(subsys_cache, Space)} of
+        {true, true} ->
             [Space | get_access_spaces(T, SpacesMap, PermitRoles)];
-        false ->
+        {_, _} ->
             get_access_spaces(T, SpacesMap, PermitRoles)
     end.
 
@@ -225,7 +225,14 @@ parse_users_info([{Login, <<"authHub">>, Role, Space} | T], SpacesAccess, Result
                     end
             end;
         false ->
-            parse_users_info(T, SpacesAccess, Result)
+            Result1 = case maps:get(Login, Result, null) of
+                null ->
+                    SubSystems = add_subsyses(SpacesAccess, #{}),
+                    Result#{Login => SubSystems};
+                _Other ->
+                    Result
+            end,
+            parse_users_info(T, SpacesAccess, Result1)
     end;
 parse_users_info([{Login, SubSys, Role, _Space} | T], SpacesAccess, Result) ->
     case lists:member(SubSys, SpacesAccess) of
@@ -240,7 +247,14 @@ parse_users_info([{Login, SubSys, Role, _Space} | T], SpacesAccess, Result) ->
                     parse_users_info(T, SpacesAccess, Result1)
             end;
         false ->
-            parse_users_info(T, SpacesAccess, Result)
+            Result1 = case maps:get(Login, Result, null) of
+                          null ->
+                              SubSystems = add_subsyses(SpacesAccess, #{}),
+                              Result#{Login => SubSystems};
+                          _Other ->
+                              Result
+                      end,
+            parse_users_info(T, SpacesAccess, Result1)
     end.
 
 -spec add_subsyses(list(), map()) -> map().
@@ -278,7 +292,7 @@ create_users([#{<<"login">> := Login, <<"pass">> := Pass} | T], PgPid) ->
         true ->
             [{salt, Salt}] = ets:lookup(opts, salt),
             SaltBin = list_to_binary(Salt),
-            PassHash = io_lib:format("~64.16.0b", [binary:decode_unsigned(crypto:hash(sha256, <<Pass/binary, SaltBin/binary>>))]),
+            PassHash = io_lib:format("~64.16.0b", [binary:decode_unsigned(crypto:pbkdf2_hmac(sha256, Pass, SaltBin, 4000, 32))]),
             case auth_hub_pg:insert(PgPid, "create_user", [Login, PassHash]) of
                 {error, {_, _, _, unique_violation, _, [{constraint_name, <<"unique_pass">>} | _]} = Reason} ->
                     ?LOG_ERROR("create_users incorrect pass ~p", [Reason]),

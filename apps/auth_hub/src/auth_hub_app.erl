@@ -8,8 +8,6 @@
 
 
 start(normal, _StartArgs) ->
-    auth_hub = ets:new(auth_hub, [set, public, named_table]),
-    true = ets:insert(auth_hub, [{server_cache, #{}}]),
     opts = ets:new(opts, [named_table, public]),
     sids_cache = ets:new(sids_cache, [named_table, public]),
     subsys_cache = ets:new(subsys_cache, [named_table, public]),
