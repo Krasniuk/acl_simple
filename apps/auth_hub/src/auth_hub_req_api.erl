@@ -225,7 +225,14 @@ parse_users_info([{Login, <<"authHub">>, Role, Space} | T], SpacesAccess, Result
                     end
             end;
         false ->
-            parse_users_info(T, SpacesAccess, Result)
+            Result1 = case maps:get(Login, Result, null) of
+                null ->
+                    SubSystems = add_subsyses(SpacesAccess, #{}),
+                    Result#{Login => SubSystems};
+                _Other ->
+                    Result
+            end,
+            parse_users_info(T, SpacesAccess, Result1)
     end;
 parse_users_info([{Login, SubSys, Role, _Space} | T], SpacesAccess, Result) ->
     case lists:member(SubSys, SpacesAccess) of
@@ -240,7 +247,14 @@ parse_users_info([{Login, SubSys, Role, _Space} | T], SpacesAccess, Result) ->
                     parse_users_info(T, SpacesAccess, Result1)
             end;
         false ->
-            parse_users_info(T, SpacesAccess, Result)
+            Result1 = case maps:get(Login, Result, null) of
+                          null ->
+                              SubSystems = add_subsyses(SpacesAccess, #{}),
+                              Result#{Login => SubSystems};
+                          _Other ->
+                              Result
+                      end,
+            parse_users_info(T, SpacesAccess, Result1)
     end.
 
 -spec add_subsyses(list(), map()) -> map().

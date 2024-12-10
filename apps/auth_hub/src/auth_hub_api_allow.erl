@@ -212,7 +212,7 @@ create_roles_handler([#{<<"role">> := Role, <<"subsystem">> := SubSys, <<"descri
             case auth_hub_pg:insert(PgPid, "insert_allow_role", [SubSys, Role, Desc]) of
                 {error, {_, _, _, unique_violation, _, _} = Reason} ->
                     ?LOG_ERROR("create_roles user have one of this roles, ~p", [Reason]),
-                    Resp = #{<<"success">> => false, <<"reason">> => <<"subsystem exists">>,
+                    Resp = #{<<"success">> => false, <<"reason">> => <<"role exists">>,
                         <<"role">> => Role, <<"subsystem">> => SubSys},
                     [Resp | create_roles_handler(T, PgPid, SpacesAccess)];
                 {error, Reason} ->
