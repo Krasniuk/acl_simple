@@ -8,8 +8,8 @@ pathDir=$(dirname $pathFile)
 cd $pathDir
 
 
-find="\[\'auth_hub_cluster1\@mykhailo-linux-1\'\]"
-insert="\[\'auth_hub_main\@mykhailo-linux-1\'\]"
+find="\[\'auth_hub_cluster1\@mykhailo-pc1\'\]"
+insert="\[\'auth_hub_main\@mykhailo-pc1\'\]"
 perl -pi -e 's/'$find'/'$insert'/g' config/sys.config
 
 find1="auth_hub_main"
