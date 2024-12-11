@@ -21,8 +21,8 @@ Start (Common tests + EUnit tests)
 
 Start WRK
 
-
-    $ wrk -t2 -c3 -d1m -R5700 -s apps/auth_hub/wrk/show_all_users.lua http://127.0.0.1:1913
+    $ wrk -t500 -c500 -d5s -s apps/auth_hub/wrk/stress_test_admin_api.lua http://127.0.0.1:1913
+    $ wrk -t500 -c500 -d5s -s apps/auth_hub/wrk/stress_test_client_api.lua http://127.0.0.1:1913
     
 API
 ----
